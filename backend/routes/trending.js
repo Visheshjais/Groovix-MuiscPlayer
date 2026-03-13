@@ -48,7 +48,7 @@ function getKeys() {
   if (process.env.YOUTUBE_API_KEY) keys.push(process.env.YOUTUBE_API_KEY);
 
   /* Check numbered keys: YOUTUBE_API_KEY_1 through YOUTUBE_API_KEY_10 */
-  for (let i = 1; i <= 10; i++) {
+  for (let i = 1; i <= 50; i++) {
     const k = process.env[`YOUTUBE_API_KEY_${i}`];
     if (k && k !== 'YOUR_KEY_HERE' && !keys.includes(k)) keys.push(k);
   }
