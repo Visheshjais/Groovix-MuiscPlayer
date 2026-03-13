@@ -10,7 +10,6 @@ Groovix is a full-stack music streaming web app where users can search, stream, 
 
 ---
 
-## Explain It to Anyone (non-technical)
 Groovix is like Spotify — but built from scratch as a personal project.
 
 You open the app, log in, and you see music categories like Trending, Hip-Hop, Punjabi, Hindi Bollywood and more. Click any song and it starts playing instantly in a clean player bar at the bottom — no ads, no YouTube interface, just the music.
