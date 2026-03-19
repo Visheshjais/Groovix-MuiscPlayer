@@ -4,20 +4,15 @@
  *  Author: Vishesh Jaiswal
  *  File:   src/pages/Auth.jsx
  *
- *  Updated: Now uses real MongoDB backend authentication.
- *  Previously was client-side only with localStorage.
- *
  *  Three modes:
  *    login  → email + password → POST /api/auth/login
  *    signup → name + email + password + optional avatar
  *             → POST /api/auth/register (multipart/form-data)
  *    guest  → no server call, sets a local guest user object
- *             guest data (liked songs, playlists) uses localStorage
  *
  *  On success:
  *    Backend sets 'gvx_token' HTTP-only cookie automatically.
  *    AuthProvider receives user object and stores it in state.
- *    App redirects to Home via AuthProvider logic.
  *
  *  Errors:
  *    Displayed inline below the form fields.
@@ -95,7 +90,6 @@ export default function Auth() {
 
 
   return (
-    /* Force dark theme on auth page for consistent look */
     <div className="auth-wrap" data-theme="dark">
 
       {/* Decorative background orbs */}
@@ -185,3 +179,48 @@ export default function Auth() {
             type="submit"
             className="btn-primary"
             disabled={loading}
+          >
+            {loading
+              ? 'Please wait...'
+              : mode === 'login' ? 'Sign In' : 'Create Account'
+            }
+          </button>
+
+        </form>
+
+        {/* ── Toggle between login and signup ── */}
+        <div className="auth-switch">
+          {mode === 'login' ? (
+            <>
+              Don't have an account?{' '}
+              <button onClick={() => { setMode('signup'); setErr(''); }}>
+                Sign up
+              </button>
+            </>
+          ) : (
+            <>
+              Already have an account?{' '}
+              <button onClick={() => { setMode('login'); setErr(''); }}>
+                Sign in
+              </button>
+            </>
+          )}
+        </div>
+
+        {/* ── Divider ── */}
+        <div className="auth-divider">
+          <span>or</span>
+        </div>
+
+        {/* ── Guest mode — skips backend, uses localStorage ── */}
+        <button
+          className="btn-ghost"
+          onClick={loginAsGuest}
+        >
+          Continue as Guest
+        </button>
+
+      </div>
+    </div>
+  );
+}

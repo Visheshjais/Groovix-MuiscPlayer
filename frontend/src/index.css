@@ -147,6 +147,26 @@ html, body, #root { height: 100%; font-family: var(--font-b); background: var(--
 .btn-primary:hover { transform:translateY(-2px); box-shadow: 0 14px 36px rgba(var(--accentR),0.45); }
 .btn-primary:active { transform:translateY(0); }
 
+/* ── Guest / secondary button ── */
+.btn-ghost {
+  width: 100%;
+  padding: 12px;
+  border: 1.5px solid var(--border2);
+  border-radius: var(--r);
+  background: var(--surface2);
+  color: var(--text2);
+  font-family: var(--font-b);
+  font-size: 14px;
+  cursor: pointer;
+  transition: all var(--t);
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+.btn-ghost:hover { border-color: var(--accent); color: var(--accent); background: rgba(var(--accentR),0.06); }
+
 .btn-secondary {
   width:100%; padding:12px; border:1.5px solid var(--border2); border-radius:var(--r);
   background: var(--surface2); color:var(--text2); font-family:var(--font-b); font-size:14px;
@@ -155,10 +175,26 @@ html, body, #root { height: 100%; font-family: var(--font-b); background: var(--
 .btn-secondary:hover { border-color:var(--accent); color:var(--accent); }
 
 .auth-err { padding:10px 14px; background:rgba(244,63,94,0.1); border:1px solid rgba(244,63,94,0.25); border-radius:var(--r); font-size:12px; color:var(--danger); margin-bottom:14px; }
-.auth-or { display:flex; align-items:center; gap:10px; margin:4px 0 14px; }
-.auth-or::before,.auth-or::after { content:''; flex:1; height:1px; background:var(--border); }
-.auth-or span { font-size:12px; color:var(--text3); }
-.auth-switch { text-align:center; font-size:14px; color:var(--text2); }
+
+/* ── "or" divider ── */
+.auth-or,
+.auth-divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 16px 0;
+}
+.auth-or::before, .auth-or::after,
+.auth-divider::before, .auth-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+.auth-or span,
+.auth-divider span { font-size:12px; color:var(--text3); }
+
+.auth-switch { text-align:center; font-size:14px; color:var(--text2); margin-top:16px; margin-bottom:4px; }
 .auth-switch button { background:none; border:none; color:var(--accent); font-weight:700; cursor:pointer; font-family:var(--font-b); font-size:14px; }
 .auth-footer { text-align:center; font-size:11px; color:var(--text3); margin-top:20px; }
 .auth-footer strong { color:var(--accent); }
@@ -386,17 +422,189 @@ html, body, #root { height: 100%; font-family: var(--font-b); background: var(--
 }
 .song-card:hover .card-play { transform:scale(1) translateY(0); opacity:1; }
 .card-eq { position:absolute; bottom:9px; right:9px; background:rgba(0,0,0,0.55); backdrop-filter:blur(6px); border-radius:99px; padding:3px 7px; }
+
+/* ── Like FAB — top LEFT so + FAB has room at bottom right ── */
 .card-like-fab {
-  position:absolute; top:7px; right:7px;
-  width:26px; height:26px; border-radius:50%;
-  background:rgba(0,0,0,0.5); border:none;
-  display:flex; align-items:center; justify-content:center;
-  cursor:pointer; font-size:12px;
-  opacity:0; transition:opacity var(--t);
+  position: absolute;
+  top: 7px;
+  left: 7px;
+  right: auto;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: rgba(0,0,0,0.5);
+  border: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 12px;
+  opacity: 0;
+  transition: opacity var(--t);
 }
-.song-card:hover .card-like-fab { opacity:1; }
+.song-card:hover .card-like-fab { opacity: 1; }
+
 .card-title { font-size:13px; font-weight:600; color:var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; margin-bottom:3px; }
 .card-ch { font-size:12px; color:var(--text3); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+
+/* ══════════════════ ADD TO PLAYLIST DROPDOWN ══════════════════ */
+
+/* FAB wrapper — bottom right of card, hidden until hover */
+.card-pl-wrap {
+  position: absolute;
+  bottom: 8px;
+  right: 8px;
+  z-index: 10;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+.card-img-wrap:hover .card-pl-wrap { opacity: 1; }
+
+/* + circle FAB */
+.card-pl-fab {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: none;
+  background: var(--accent);
+  color: #fff;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+  transition: transform 0.15s, background 0.15s;
+}
+.card-pl-fab:hover { transform: scale(1.12); background: var(--accent2); }
+
+/* Wrapper for player bar dropdown */
+.pl-drop-wrap { display: inline-flex; }
+
+/* Dropdown panel */
+.pl-dropdown {
+  position: absolute;
+  bottom: 110%;
+  left: 0;
+  min-width: 200px;
+  max-width: 240px;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+  z-index: 9999;
+  overflow: hidden;
+  animation: dropIn 0.18s ease;
+}
+@keyframes dropIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* Header */
+.pl-drop-title {
+  padding: 10px 14px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text3);
+  border-bottom: 1px solid var(--border);
+}
+
+/* Empty state */
+.pl-drop-empty {
+  padding: 12px 14px;
+  font-size: 13px;
+  color: var(--text3);
+}
+
+/* Playlist row */
+.pl-drop-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 9px 14px;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.15s;
+  font-family: var(--font-b);
+}
+.pl-drop-item:hover { background: var(--surface); }
+
+.pl-drop-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pl-drop-count {
+  font-size: 11px;
+  color: var(--text3);
+  min-width: 20px;
+  text-align: right;
+}
+
+/* + New playlist button */
+.pl-drop-create {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 9px 14px;
+  border: none;
+  border-top: 1px solid var(--border);
+  background: transparent;
+  color: var(--accent);
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.15s;
+  font-family: var(--font-b);
+}
+.pl-drop-create:hover { background: var(--surface); }
+
+/* Inline create row */
+.pl-drop-new {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  border-top: 1px solid var(--border);
+}
+
+/* Name input */
+.pl-drop-input {
+  flex: 1;
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 5px 8px;
+  color: var(--text);
+  font-size: 13px;
+  outline: none;
+  font-family: var(--font-b);
+}
+.pl-drop-input:focus { border-color: var(--accent); }
+
+/* Checkmark save button */
+.pl-drop-save {
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 5px 10px;
+  font-size: 14px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.pl-drop-save:hover { background: var(--accent2); }
 
 /* ══════════════════ TRACK ROW ══════════════════ */
 .track-list { display:flex; flex-direction:column; }
@@ -438,26 +646,16 @@ html, body, #root { height: 100%; font-family: var(--font-b); background: var(--
   border-top:1px solid var(--border);
   position:relative;
 }
-.video-inner {
-  display:flex; height:100%;
-}
-.video-frame-wrap {
-  flex:0 0 55%;
-  background:#000;
-  position:relative;
-}
-.video-frame-wrap iframe {
-  position:absolute; inset:0; width:100%; height:100%;
-  border:none;
-}
+.video-inner { display:flex; height:100%; }
+.video-frame-wrap { flex:0 0 55%; background:#000; position:relative; }
+.video-frame-wrap iframe { position:absolute; inset:0; width:100%; height:100%; border:none; }
 .video-info-panel {
   flex:1;
   display:flex; flex-direction:column; justify-content:center;
   padding:28px 32px; gap:14px;
   background:linear-gradient(135deg,var(--bg2),var(--bg3));
   border-left:1px solid var(--border);
-  position:relative;
-  min-width:0;
+  position:relative; min-width:0;
 }
 .vid-live-dot {
   width:8px; height:8px; border-radius:50%; background:var(--accent); display:inline-block;
@@ -519,7 +717,7 @@ html, body, #root { height: 100%; font-family: var(--font-b); background: var(--
 .np-info { flex:1; min-width:0; }
 .np-title { font-size:13px; font-weight:600; color:var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:190px; }
 .np-ch { font-size:11px; color:var(--text3); margin-top:2px; }
-.np-acts { display:flex; gap:3px; }
+.np-acts { display:flex; gap:3px; align-items:center; }
 .np-btn { background:none; border:none; cursor:pointer; padding:6px; border-radius:8px; font-size:15px; color:var(--text3); transition:all var(--t); }
 .np-btn:hover { color:var(--text); background:var(--surface); }
 .np-btn.liked { color:var(--danger); }
@@ -640,49 +838,25 @@ html, body, #root { height: 100%; font-family: var(--font-b); background: var(--
   .u-logout { border:none; background:none; }
 }
 
-/* ══════════════════ CAROUSEL ARROW BUTTONS ══════════════════
-   Left/right arrow buttons shown at the end of each section header.
-   Click → scrolls the carousel div left or right by 80% of its width.
-   ══════════════════════════════════════════════════════════ */
+/* ══════════════════ CAROUSEL ARROWS ══════════════════ */
 .carousel-arrow {
-  width:            34px;
-  height:           34px;
-  border-radius:    50%;
-  background:       var(--surface);
-  border:           1px solid var(--border2);
-  color:            var(--text2);
-  font-size:        20px;
-  line-height:      1;
-  display:          flex;
-  align-items:      center;
-  justify-content:  center;
-  cursor:           pointer;
-  transition:       all var(--t) var(--ease);
-  flex-shrink:      0;
+  width: 34px; height: 34px; border-radius: 50%;
+  background: var(--surface); border: 1px solid var(--border2);
+  color: var(--text2); font-size: 20px; line-height: 1;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; transition: all var(--t) var(--ease); flex-shrink: 0;
 }
 .carousel-arrow:hover {
-  background:       var(--accent);
-  border-color:     var(--accent);
-  color:            #fff;
-  transform:        scale(1.1);
-  box-shadow:       0 4px 14px rgba(var(--accentR), 0.4);
+  background: var(--accent); border-color: var(--accent); color: #fff;
+  transform: scale(1.1); box-shadow: 0 4px 14px rgba(var(--accentR),0.4);
 }
-.carousel-arrow:active {
-  transform: scale(0.95);
-}
+.carousel-arrow:active { transform: scale(0.95); }
 
-/* ══════════════════ SCROLL PROGRESS BAR ══════════════════
-   Thin bar at the very top of the page showing scroll progress.
-   Filled via JS in the main-scroll div's onScroll handler.
-   ══════════════════════════════════════════════════════════ */
+/* ══════════════════ SCROLL PROGRESS BAR ══════════════════ */
 #scroll-bar {
-  position:   fixed;
-  top:        0;
-  left:       var(--sidebar-w);
-  height:     3px;
-  width:      0%;
+  position: fixed; top: 0; left: var(--sidebar-w);
+  height: 3px; width: 0%;
   background: linear-gradient(to right, var(--accent), var(--accent2));
-  z-index:    999;
-  transition: width 0.1s linear;
+  z-index: 999; transition: width 0.1s linear;
   border-radius: 0 2px 2px 0;
 }
