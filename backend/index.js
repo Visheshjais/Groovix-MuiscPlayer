@@ -1,116 +1,171 @@
-/**
+﻿/**
  * ============================================================
  *  GROOVIX — Backend Server Entry Point
  *  Author: Vishesh Jaiswal
  *  File:   backend/index.js
  *
- *  Node.js + Express REST API server.
- *  Proxies YouTube Data API v3 so the API key stays server-side.
- *
- *  Routes:
- *    GET /api/health      — health check
- *    GET /api/test-key    — diagnose YouTube API key issues
- *    GET /api/trending    — 8 music categories
- *    GET /api/search?q=   — YouTube search
- *    GET /api/video/:id   — single video details
- *
- *  CORS:
- *    Allows requests from localhost (dev) and Netlify (production).
+ *  Hosted on: Vercel (serverless)
+ *  Optimizations:
+ *    1. COMPRESSION  — gzip all responses
+ *    2. CACHING      — trending results cached 10 mins (per instance)
  * ============================================================
  */
 
-import express from 'express';
-import cors    from 'cors';
-import dotenv  from 'dotenv';
-import { createServer } from 'net';
+import express     from 'express';
+import cors        from 'cors';
+import dotenv      from 'dotenv';
+import compression from 'compression';
 
+/* ── Route handlers ── */
 import searchRouter   from './routes/search.js';
 import trendingRouter from './routes/trending.js';
 import videoRouter    from './routes/video.js';
 
+/* ── Load .env variables (YOUTUBE_API_KEY, PORT, etc.) ── */
 dotenv.config();
 
-/* ── Auto port detection ──
-   Tries the desired port, increments if busy */
-function getFreePort(start) {
-  return new Promise(resolve => {
-    const s = createServer();
-    s.listen(start, '0.0.0.0', () => { s.close(() => resolve(start)); });
-    s.on('error', () => resolve(getFreePort(start + 1)));
-  });
-}
+const app  = express();
 
-const app     = express();
-const DESIRED = Number(process.env.PORT) || 3001;
-const PORT    = await getFreePort(DESIRED);
+/* ── PORT: Vercel injects its own PORT in production,
+         falls back to 3001 for local development ── */
+const PORT = process.env.PORT || 3001;
 
-/* ── CORS — allow both local dev and Netlify production ── */
+/* ════════════════════════════════════════════
+   COMPRESSION
+   ─────────────────────────────────────────────
+   Compresses all API responses using gzip.
+   Reduces payload size, speeds up responses.
+════════════════════════════════════════════ */
+app.use(compression());
+
+/* ════════════════════════════════════════════
+   CORS — Cross Origin Resource Sharing
+   ─────────────────────────────────────────────
+   Controls which frontend URLs can talk to this backend.
+
+   Allowed:
+     - localhost:5173  → Vite dev server
+     - localhost:4173  → Vite preview server
+     - *.vercel.app    → All Vercel deployments (prod + previews)
+
+   Blocked:
+     - Everything else (old Netlify URLs, unknown origins)
+════════════════════════════════════════════ */
 const ALLOWED_ORIGINS = [
-  'http://localhost:5173',               /* Vite dev server */
-  'http://localhost:4173',               /* Vite preview */
-  'https://groovix-musicpalyer.netlify.app', /* Netlify production */
+  'http://localhost:5173', /* Vite dev */
+  'http://localhost:4173', /* Vite preview */
 ];
 
 app.use(cors({
   origin: (origin, callback) => {
-    /* Allow requests with no origin (mobile apps, curl, Postman) */
+    /* Allow server-to-server requests with no origin header */
     if (!origin) return callback(null, true);
+
+    /* Allow exact matches (localhost) */
     if (ALLOWED_ORIGINS.includes(origin)) return callback(null, true);
-    /* Also allow any netlify.app subdomain */
-    if (origin.endsWith('.netlify.app')) return callback(null, true);
+
+    /* Allow all Vercel deployments — covers prod URL + preview URLs */
+    if (origin.endsWith('.vercel.app')) return callback(null, true);
+
+    /* Block everything else */
     callback(new Error(`CORS blocked: ${origin}`));
   },
-  methods:     ['GET', 'POST', 'OPTIONS'],
+  methods: ['GET', 'POST', 'OPTIONS'],
   credentials: true,
 }));
 
+/* ── Parse incoming JSON request bodies ── */
 app.use(express.json());
 
-/* ── Routes ── */
+/* ════════════════════════════════════════════
+   IN-MEMORY CACHE
+   ─────────────────────────────────────────────
+   Stores trending API results for 10 minutes.
+   Avoids hitting YouTube API quota on every request.
+
+   ⚠️ Vercel Note: Each serverless function instance
+   has its own memory. Cache is not shared globally,
+   but still helps reduce quota usage per instance.
+
+   For shared cache across instances → use Upstash Redis.
+════════════════════════════════════════════ */
+const cache     = new Map();
+const CACHE_TTL = 10 * 60 * 1000; /* 10 minutes in milliseconds */
+
+/* Returns cached data if it exists and hasn't expired, else null */
+export function getCache(key) {
+  const item = cache.get(key);
+  if (!item) return null;
+  /* Expired — delete and return null so fresh data is fetched */
+  if (Date.now() - item.timestamp > CACHE_TTL) {
+    cache.delete(key);
+    return null;
+  }
+  return item.data;
+}
+
+/* Stores data in cache with current timestamp */
+export function setCache(key, data) {
+  cache.set(key, { data, timestamp: Date.now() });
+}
+
+/* ════════════════════════════════════════════
+   ROUTES
+   ─────────────────────────────────────────────
+   /api/search   → YouTube search results
+   /api/trending → 8 music category carousels
+   /api/video    → Single video details by ID
+════════════════════════════════════════════ */
 app.use('/api/search',   searchRouter);
 app.use('/api/trending', trendingRouter);
 app.use('/api/video',    videoRouter);
 
-/* ── Health check ── */
-app.get('/api/health', (_, res) => res.json({ ok: true, port: PORT }));
+/* ── Health check — used to verify server is alive ── */
+app.get('/api/health', (_, res) => res.json({ ok: true }));
 
-/* ── API Key Diagnostic ──
-   Visit /api/test-key to see if the YouTube key is working */
+/* ── Cache status — inspect what's currently cached ── */
+app.get('/api/cache-status', (_, res) => {
+  const status = {};
+  cache.forEach((val, key) => {
+    const age = Math.floor((Date.now() - val.timestamp) / 1000);
+    status[key] = `cached ${age}s ago (expires in ${600 - age}s)`;
+  });
+  res.json({ cached_keys: cache.size, items: status });
+});
+
+/* ── API Key Diagnostic — test if YouTube API key is valid ── */
 app.get('/api/test-key', async (req, res) => {
   try {
     const key = process.env.YOUTUBE_API_KEY;
-    if (!key || key === 'YOUR_KEY_HERE') {
-      return res.json({ ok: false, problem: 'No API key found in backend/.env' });
-    }
+    if (!key) return res.json({ ok: false, problem: 'No API key found in environment' });
+
     const url  = `https://www.googleapis.com/youtube/v3/search?part=snippet&q=music&maxResults=1&type=video&key=${key}`;
     const r    = await fetch(url);
     const data = await r.json();
 
-    if (data.error) {
-      const code = data.error.code;
-      const msg  = data.error.errors?.[0]?.reason || data.error.message;
-      return res.json({
-        ok:      false,
-        code,
-        reason:  msg,
-        problem: code === 403
-          ? 'Quota exceeded or key restricted.'
-          : 'Invalid or expired API key.',
-        fix: 'Go to https://console.cloud.google.com → create a new key with YouTube Data API v3 enabled.',
-      });
-    }
-    res.json({ ok: true, message: '✅ API key works!', sample: data.items?.[0]?.snippet?.title });
+    /* YouTube returns an error object if the key is bad or quota is hit */
+    if (data.error) return res.json({
+      ok: false,
+      code: data.error.code,
+      reason: data.error.errors?.[0]?.reason,
+    });
+
+    res.json({ ok: true, message: 'API key works!', sample: data.items?.[0]?.snippet?.title });
   } catch (err) {
     res.json({ ok: false, error: err.message });
   }
 });
 
-/* ── Start server ── */
-app.listen(PORT, () => {
-  console.log(`\n🎵 Groovix Backend → http://localhost:${PORT}`);
-  console.log(`   Diagnose API key: http://localhost:${PORT}/api/test-key`);
-  if (PORT !== DESIRED) {
-    console.log(`\n⚠️  Port ${DESIRED} was busy — now using: ${PORT}`);
-    console.log(`   → Update frontend/vite.config.js proxy target to: http://localhost:${PORT}`);
-  }
-});
+/* ════════════════════════════════════════════
+   SERVER START — Local Dev Only
+   ─────────────────────────────────────────────
+   On Vercel, the app is exported as a serverless
+   function — Vercel handles listening internally.
+   app.listen() is only called during local development.
+════════════════════════════════════════════ */
+if (process.env.NODE_ENV !== 'production') {
+  app.listen(PORT, () => console.log(`🎵 Groovix Backend → http://localhost:${PORT}`));
+}
+
+/* ── Export app for Vercel serverless runtime ── */
+export default app;

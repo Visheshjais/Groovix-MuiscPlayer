@@ -8,15 +8,18 @@
  *
  *  BASE URL logic:
  *    Development  → '/api'  (Vite proxy forwards to localhost:3001)
- *    Production   → 'https://groovix-backend.onrender.com/api'
+ *    Production   → 'https://your-backend.vercel.app/api'
  *
- *  VITE_API_BASE is set as an environment variable on Netlify.
- *  Locally it is not set, so it falls back to '/api'.
+ *  VITE_API_URL is set as an environment variable on Vercel.
+ *  Locally it is not set, so it falls back to '/api' which
+ *  gets proxied to localhost:3001 via vite.config.js.
  * ============================================================
  */
 
-/* ── Pick the right backend URL based on environment ── */
-const BASE = import.meta.env.VITE_API_BASE || '/api';
+/* ── Pick the right backend URL based on environment ──
+   Dev:  VITE_API_URL is not set → falls back to '/api' → Vite proxy handles it
+   Prod: VITE_API_URL = 'https://your-backend.vercel.app/api' → set in Vercel dashboard ── */
+const BASE = import.meta.env.VITE_API_URL || '/api';
 
 /**
  * getTrending()
