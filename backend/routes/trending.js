@@ -8,17 +8,23 @@
  *
  *  Fetches 8 music categories in parallel using Promise.all.
  *
+ *  ── CACHING ───────────────────────────────────────────────
+ *  Results are cached for 10 minutes using the cache from
+ *  index.js. First visitor fetches from YouTube (slow).
+ *  Next visitors within 10 mins get instant cached response.
+ *
  *  ── API KEY ROTATION ──────────────────────────────────────
  *  Multiple YouTube API keys are stored in .env as:
- *    YOUTUBE_API_KEY_1, YOUTUBE_API_KEY_2, ... YOUTUBE_API_KEY_5
+ *    YOUTUBE_API_KEY_1, YOUTUBE_API_KEY_2, ... YOUTUBE_API_KEY_50
  *
  *  If one key hits quota (403) or is invalid (400/401),
  *  the rotator automatically tries the next key.
- *  This keeps the site working even when one key is exhausted.
  * ============================================================
  */
 
-import express from 'express';
+import express          from 'express';
+import { getCache, setCache } from '../index.js';
+
 const router = express.Router();
 
 /* ── 8 music categories to fetch ── */
@@ -33,12 +39,15 @@ const CATEGORIES = [
   { id: 'hindi',      query: 'new hindi bollywood songs 2025'  },
 ];
 
+/* ── Cache key for trending data ── */
+const CACHE_KEY = 'trending:all';
+
 /* ════════════════════════════════════════════
    getKeys()
    ─────────────────────────────────────────────
    Reads all API keys from environment variables.
    Supports YOUTUBE_API_KEY, YOUTUBE_API_KEY_1
-   through YOUTUBE_API_KEY_10.
+   through YOUTUBE_API_KEY_50.
    Returns array of valid (non-empty) keys.
 ════════════════════════════════════════════ */
 function getKeys() {
@@ -47,7 +56,7 @@ function getKeys() {
   /* Check the default key name first */
   if (process.env.YOUTUBE_API_KEY) keys.push(process.env.YOUTUBE_API_KEY);
 
-  /* Check numbered keys: YOUTUBE_API_KEY_1 through YOUTUBE_API_KEY_10 */
+  /* Check numbered keys: YOUTUBE_API_KEY_1 through YOUTUBE_API_KEY_50 */
   for (let i = 1; i <= 50; i++) {
     const k = process.env[`YOUTUBE_API_KEY_${i}`];
     if (k && k !== 'YOUR_KEY_HERE' && !keys.includes(k)) keys.push(k);
@@ -139,7 +148,24 @@ async function fetchWithRotation(query) {
 /* ── Route handler ── */
 router.get('/', async (req, res) => {
   try {
-    /* Fetch all 8 categories in parallel */
+    /* ════════════════════════════════════════════
+       CHECK CACHE FIRST
+       ─────────────────────────────────────────────
+       If trending data was fetched in the last 10 mins,
+       return it instantly without hitting YouTube API.
+       This makes repeat page loads near-instant.
+    ════════════════════════════════════════════ */
+    const cached = getCache(CACHE_KEY);
+    if (cached) {
+      console.log('[Trending] Serving from cache ⚡');
+      return res.json(cached);
+    }
+
+    console.log('[Trending] Cache miss — fetching from YouTube...');
+
+    /* ── Fetch all 8 categories in parallel ──
+       Promise.all fires all 8 requests at the same time
+       instead of one by one — much faster overall. */
     const results = await Promise.all(
       CATEGORIES.map(async cat => ({
         id:    cat.id,
@@ -147,9 +173,13 @@ router.get('/', async (req, res) => {
       }))
     );
 
-    /* Build response object */
+    /* Build response object: { trending: [...], hiphop: [...], ... } */
     const out = {};
     results.forEach(r => { out[r.id] = r.items; });
+
+    /* ── Save to cache for next 10 minutes ── */
+    setCache(CACHE_KEY, out);
+    console.log('[Trending] Fetched fresh data and cached ✅');
 
     res.json(out);
   } catch (err) {

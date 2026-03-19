@@ -163,6 +163,11 @@ html, body, #root { height: 100%; font-family: var(--font-b); background: var(--
 .auth-footer { text-align:center; font-size:11px; color:var(--text3); margin-top:20px; }
 .auth-footer strong { color:var(--accent); }
 
+@keyframes shimmer {
+  0%   { background-position: -200% 0; }
+  100% { background-position:  200% 0; }
+}
+
 /* ══════════════════ SIDEBAR ══════════════════ */
 .sidebar {
   background: var(--bg2);

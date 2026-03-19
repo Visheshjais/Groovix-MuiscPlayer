@@ -10,18 +10,14 @@
  *       (Trending, Hip-Hop, Pop, Indie, Electronic, R&B, Punjabi, Hindi)
  *    3. Top Tracks     — list view of trending songs
  *
- *  Scroll-to-top:
- *    Clicking the "Groovix" logo in the sidebar scrolls this
- *    main area back to the top. We expose a scrollToTop() method
- *    via a ref on the <main> element in App.jsx... but the simpler
- *    approach used here is: the main-area div has id="main-scroll"
- *    and the Sidebar calls window.scrollMainToTop() which we define
- *    here as a global helper.
+ *  ── SKELETON LOADING ──────────────────────────────────────
+ *  While data is loading, each carousel shows 7 shimmer
+ *  placeholder cards with a left-to-right shine animation.
+ *  This gives instant visual feedback instead of blank screen.
  *
- *  Carousels:
- *    Each section uses a horizontally scrollable div with
- *    scroll-snap. Arrow buttons appear on hover to scroll left/right.
- *    This replaces the old "See all →" text link.
+ *  ── SCROLL TO TOP ─────────────────────────────────────────
+ *  Clicking the Groovix logo scrolls main area to top.
+ *  We expose window.__groovixScrollTop() as a global helper.
  * ============================================================
  */
 
@@ -41,11 +37,55 @@ const SECTIONS = [
   { id: 'indie',      label: '🌿 Indie Picks',         color: '#27ae60' },
   { id: 'electronic', label: '⚡ Electronic',           color: '#2980b9' },
   { id: 'rnb',        label: '🎙 R&B & Soul',          color: '#e74c3c' },
-  { id: 'punjabi',    label: '🎺 Punjabi Beats',       color: '#e67e22' }, /* ← NEW */
-  { id: 'hindi',      label: '🎵 Hindi Bollywood',    color: '#c0392b' }, /* ← NEW */
+  { id: 'punjabi',    label: '🎺 Punjabi Beats',       color: '#e67e22' },
+  { id: 'hindi',      label: '🎵 Hindi Bollywood',    color: '#c0392b' },
 ];
 
-/* ── CarouselSection: one horizontal slider with arrow buttons ── */
+/* ════════════════════════════════════════════
+   SkeletonCard
+   ─────────────────────────────────────────────
+   Single shimmer placeholder shown while songs load.
+   Uses a CSS keyframe animation (shimmer) defined in
+   index.css to create a left-to-right shine effect.
+   Width/height matches real SongCard dimensions.
+════════════════════════════════════════════ */
+function SkeletonCard() {
+  return (
+    <div style={{
+      width:        164,
+      height:       220,
+      flexShrink:   0,
+      borderRadius: 14,
+      background:   'var(--surface)',
+      overflow:     'hidden',
+      position:     'relative',
+    }}>
+      {/* Shimmer overlay — animates left to right */}
+      <div style={{
+        position:   'absolute',
+        inset:      0,
+        background: 'linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.06) 50%, transparent 100%)',
+        animation:  'shimmer 1.4s infinite',
+        backgroundSize: '200% 100%',
+      }} />
+      {/* Fake thumbnail area */}
+      <div style={{ height: 160, background: 'rgba(255,255,255,0.04)' }} />
+      {/* Fake title lines */}
+      <div style={{ padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+        <div style={{ height: 10, borderRadius: 6, background: 'rgba(255,255,255,0.07)', width: '80%' }} />
+        <div style={{ height: 8,  borderRadius: 6, background: 'rgba(255,255,255,0.04)', width: '55%' }} />
+      </div>
+    </div>
+  );
+}
+
+/* ════════════════════════════════════════════
+   CarouselSection
+   ─────────────────────────────────────────────
+   One horizontal slider with arrow buttons.
+   Shows SkeletonCards while loading, real
+   SongCards once data arrives.
+════════════════════════════════════════════ */
 function CarouselSection({ label, color, songs, loading, onSeeAll }) {
   /* Ref to the scrollable carousel div — used by arrow buttons */
   const trackRef = useRef(null);
@@ -75,11 +115,9 @@ function CarouselSection({ label, color, songs, loading, onSeeAll }) {
       {/* Horizontally scrollable song cards */}
       <div className="carousel" ref={trackRef}>
         {loading
-          /* Show skeleton placeholders while loading */
-          ? Array(7).fill(0).map((_, i) => (
-              <div key={i} className="skel" style={{ width: 164, height: 220, flexShrink: 0, borderRadius: 14 }} />
-            ))
-          /* Render actual song cards */
+          /* Show shimmer skeleton cards while data is loading */
+          ? Array(7).fill(0).map((_, i) => <SkeletonCard key={i} />)
+          /* Render actual song cards once data arrives */
           : songs.map(s => <SongCard key={s.videoId} song={s} queue={songs} />)
         }
       </div>
@@ -97,10 +135,16 @@ export default function Home() {
   const { user } = useAuth();
   const nav      = useNavigate();
 
-  /* Ref to the scrollable main area — used for scroll-to-top */
+  /* Ref to the scrollable main area */
   const mainRef = useRef(null);
 
-  /* ── Fetch all trending categories on page load ── */
+  /* ════════════════════════════════════════════
+     FETCH TRENDING DATA
+     ─────────────────────────────────────────────
+     Called once on page load.
+     Shows skeletons immediately, replaces with
+     real data once the API responds.
+  ════════════════════════════════════════════ */
   useEffect(() => {
     getTrending()
       .then(setData)
@@ -110,12 +154,10 @@ export default function Home() {
 
   /* ── Expose scrollToTop globally so Sidebar logo can call it ── */
   useEffect(() => {
-    /* When the Groovix logo is clicked, scroll the main area to top */
     window.__groovixScrollTop = () => {
       const mainEl = document.getElementById('main-scroll');
       if (mainEl) mainEl.scrollTo({ top: 0, behavior: 'smooth' });
     };
-    /* Cleanup on unmount */
     return () => { delete window.__groovixScrollTop; };
   }, []);
 
@@ -124,14 +166,11 @@ export default function Home() {
   const heroList = data.trending || [];
 
   return (
-    /* main-scroll id is used by the scroll-to-top function above */
     <div
       id="main-scroll"
       style={{ height: '100%', overflowY: 'auto' }}
       onScroll={(e) => {
-        /* ── Scroll progress bar ──
-           Update the width of #scroll-bar based on scroll position.
-           scrollTop = how far scrolled, scrollHeight - clientHeight = max scrollable distance. */
+        /* Update scroll progress bar at top of page */
         const el       = e.currentTarget;
         const scrolled = el.scrollTop / (el.scrollHeight - el.clientHeight);
         const bar      = document.getElementById('scroll-bar');
@@ -153,27 +192,54 @@ export default function Home() {
           <div className="hero-grad" />
 
           <div className="hero-body">
-            {hero
-              ? <img className="hero-art" src={hero.thumbnail} alt={hero.title} />
-              : <div className="hero-art-ph">🎧</div>
+            {/* ── Hero thumbnail or skeleton placeholder ── */}
+            {loading
+              ? <div style={{
+                  width: 180, height: 180, borderRadius: 16,
+                  background: 'var(--surface)', flexShrink: 0,
+                  position: 'relative', overflow: 'hidden',
+                }}>
+                  <div style={{
+                    position: 'absolute', inset: 0,
+                    background: 'linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.06) 50%, transparent 100%)',
+                    animation: 'shimmer 1.4s infinite',
+                    backgroundSize: '200% 100%',
+                  }} />
+                </div>
+              : hero
+                ? <img className="hero-art" src={hero.thumbnail} alt={hero.title} />
+                : <div className="hero-art-ph">🎧</div>
             }
+
             <div className="hero-info">
               <div className="hero-tag">✦ Featured Mix</div>
-              <h1 className="hero-title">
-                {loading
-                  ? 'Loading...'
-                  : hero?.title?.split(' ').slice(0, 5).join(' ') || 'Midnight Reverie'
-                }
-              </h1>
+
+              {/* ── Hero title or skeleton line ── */}
+              {loading
+                ? <div style={{
+                    height: 32, width: '60%', borderRadius: 8,
+                    background: 'rgba(255,255,255,0.07)',
+                    animation: 'shimmer 1.4s infinite',
+                    backgroundSize: '200% 100%',
+                    backgroundImage: 'linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.06) 50%, transparent 100%)',
+                  }} />
+                : <h1 className="hero-title">
+                    {hero?.title?.split(' ').slice(0, 5).join(' ') || 'Midnight Reverie'}
+                  </h1>
+              }
+
               <p className="hero-meta">
                 Welcome back, <span>{user?.name || 'Guest'}</span>
-                {' '}· {heroList.length} songs ready
+                {' '}· {loading ? '...' : `${heroList.length} songs ready`}
               </p>
+
               <div className="hero-acts">
                 {/* Play All — loads entire trending list as queue */}
                 <button
                   className="btn-play-lg"
                   onClick={() => hero && play(hero, heroList)}
+                  disabled={loading}
+                  style={{ opacity: loading ? 0.5 : 1 }}
                 >
                   ▶ Play All
                 </button>
@@ -201,15 +267,8 @@ export default function Home() {
           <div style={{ color: '#fca5a5', fontSize: 13 }}>
             Possible causes:<br />
             <strong>1. Quota exceeded</strong> — YouTube API allows 10,000 units/day.<br />
-            <strong>2. Invalid key</strong> — Check <code style={{ background: 'rgba(255,255,255,0.1)', padding: '1px 5px', borderRadius: 4 }}>backend/.env</code><br />
-            <strong>3. Backend not running</strong> — Check terminal for [0] errors.<br />
-            <span style={{ marginTop: 4, display: 'inline-block' }}>
-              → Diagnose:{' '}
-              <a href="http://localhost:3001/api/test-key" target="_blank" rel="noreferrer"
-                style={{ color: '#93c5fd', textDecoration: 'underline' }}>
-                http://localhost:3001/api/test-key
-              </a>
-            </span>
+            <strong>2. Invalid key</strong> — Check your Vercel environment variables.<br />
+            <strong>3. Backend not running</strong> — Check Vercel deployment logs.
           </div>
         </div>
       )}
