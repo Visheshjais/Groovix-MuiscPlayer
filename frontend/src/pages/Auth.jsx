@@ -4,58 +4,114 @@
  *  Author: Vishesh Jaiswal
  *  File:   src/pages/Auth.jsx
  *
- *  Client-side only auth — no real server authentication.
- *  Stores user object in localStorage via AuthProvider.
+ *  Updated: Now uses real MongoDB backend authentication.
+ *  Previously was client-side only with localStorage.
  *
- *  Three modes toggled by the "Sign In / Sign Up" link:
- *    login  — email + password
- *    signup — name + email + password
- *  Guest mode — one click, logs in as "Guest"
+ *  Three modes:
+ *    login  → email + password → POST /api/auth/login
+ *    signup → name + email + password + optional avatar
+ *             → POST /api/auth/register (multipart/form-data)
+ *    guest  → no server call, sets a local guest user object
+ *             guest data (liked songs, playlists) uses localStorage
+ *
+ *  On success:
+ *    Backend sets 'gvx_token' HTTP-only cookie automatically.
+ *    AuthProvider receives user object and stores it in state.
+ *    App redirects to Home via AuthProvider logic.
+ *
+ *  Errors:
+ *    Displayed inline below the form fields.
  * ============================================================
  */
 
-import { useState } from 'react';
-import { useAuth }  from '../context';
+import { useState, useRef } from 'react';
+import { useAuth }          from '../context';
 
 export default function Auth() {
-  const [mode,  setMode]  = useState('login');
-  const [name,  setName]  = useState('');
-  const [email, setEmail] = useState('');
-  const [pass,  setPass]  = useState('');
-  const [err,   setErr]   = useState('');
 
-  const { login } = useAuth();
+  /* ── Form mode: 'login' or 'signup' ── */
+  const [mode,    setMode]    = useState('login');
 
-  const submit = e => {
+  /* ── Form field values ── */
+  const [name,    setName]    = useState('');
+  const [email,   setEmail]   = useState('');
+  const [pass,    setPass]    = useState('');
+
+  /* ── UI state ── */
+  const [err,     setErr]     = useState('');
+  const [loading, setLoading] = useState(false);
+
+  /* ── Ref for the file input (avatar upload in signup mode) ── */
+  const fileRef = useRef(null);
+
+  /* ── Auth context: login() handles both register and login ── */
+  const { login, loginAsGuest } = useAuth();
+
+
+  /* ════════════════════════════════════════════
+     FORM SUBMIT HANDLER
+     ─────────────────────────────────────────────
+     signup: builds FormData so avatar image can be
+             sent as multipart/form-data to backend.
+     login:  calls login(email, password) which calls
+             apiLogin() from the API service.
+
+     Errors thrown by login() are caught and shown inline.
+  ════════════════════════════════════════════ */
+  const submit = async (e) => {
     e.preventDefault();
     setErr('');
+    setLoading(true);
 
-    /* Basic validation */
-    if (mode === 'signup' && !name.trim())
-      return setErr('Please enter your name.');
-    if (!email.includes('@'))
-      return setErr('Enter a valid email address.');
-    if (pass.length < 6)
-      return setErr('Password must be at least 6 characters.');
+    try {
+      if (mode === 'signup') {
 
-    /* Login — derive display name from email if signup not used */
-    login(mode === 'signup' ? name : email.split('@')[0], email);
+        /* ── Build FormData for multipart avatar upload ── */
+        const formData = new FormData();
+        formData.append('name',     name.trim());
+        formData.append('email',    email.trim());
+        formData.append('password', pass);
+
+        /* Only attach avatar if user selected a file */
+        if (fileRef.current?.files[0]) {
+          formData.append('avatar', fileRef.current.files[0]);
+        }
+
+        /* Call AuthProvider login() in register mode */
+        await login(null, null, 'register', formData);
+
+      } else {
+        /* ── Login mode: email + password only ── */
+        await login(email.trim(), pass);
+      }
+
+    } catch (e) {
+      /* Show error message returned from backend */
+      setErr(e.message || 'Something went wrong. Please try again.');
+    } finally {
+      setLoading(false);
+    }
   };
+
 
   return (
     /* Force dark theme on auth page for consistent look */
     <div className="auth-wrap" data-theme="dark">
+
+      {/* Decorative background orbs */}
       <div className="orb orb1" />
       <div className="orb orb2" />
       <div className="orb orb3" />
 
       <div className="auth-card">
-        {/* Brand */}
+
+        {/* ── Brand logo ── */}
         <div className="auth-brand">
           <div className="auth-brand-icon">🎵</div>
           <div className="auth-brand-name">Groo<em>vix</em></div>
         </div>
 
+        {/* ── Title and subtitle change based on mode ── */}
         <h2 className="auth-title">
           {mode === 'login' ? 'Welcome back' : 'Join Groovix'}
         </h2>
@@ -67,7 +123,8 @@ export default function Auth() {
         </p>
 
         <form onSubmit={submit}>
-          {/* Name field (signup only) */}
+
+          {/* Name field — signup mode only */}
           {mode === 'signup' && (
             <div className="field">
               <label>Your Name</label>
@@ -76,10 +133,12 @@ export default function Auth() {
                 placeholder="Vishesh Jaiswal"
                 value={name}
                 onChange={e => setName(e.target.value)}
+                required
               />
             </div>
           )}
 
+          {/* Email field */}
           <div className="field">
             <label>Email Address</label>
             <input
@@ -87,9 +146,11 @@ export default function Auth() {
               placeholder="you@example.com"
               value={email}
               onChange={e => setEmail(e.target.value)}
+              required
             />
           </div>
 
+          {/* Password field */}
           <div className="field">
             <label>Password</label>
             <input
@@ -97,40 +158,30 @@ export default function Auth() {
               placeholder="••••••••"
               value={pass}
               onChange={e => setPass(e.target.value)}
+              required
             />
           </div>
 
-          {/* Validation error */}
+          {/* Avatar upload — signup mode only, optional */}
+          {mode === 'signup' && (
+            <div className="field">
+              <label>
+                Profile Photo
+                <span style={{ opacity: 0.5, marginLeft: 6 }}>(optional)</span>
+              </label>
+              <input
+                type="file"
+                accept="image/*"
+                ref={fileRef}
+              />
+            </div>
+          )}
+
+          {/* Inline error message from backend */}
           {err && <div className="auth-err">⚠ {err}</div>}
 
-          <button type="submit" className="btn-primary">
-            {mode === 'login' ? '→ Sign In' : '✦ Create Account'}
-          </button>
-
-          <div className="auth-or"><span>or</span></div>
-
-          {/* Guest login */}
+          {/* Submit button — shows loading state while waiting */}
           <button
-            type="button"
-            className="btn-secondary"
-            onClick={() => login('Guest', 'guest@groovix.app')}
-          >
-            👤 Continue as Guest
-          </button>
-        </form>
-
-        {/* Toggle mode */}
-        <p className="auth-switch">
-          {mode === 'login' ? "Don't have an account? " : 'Already have an account? '}
-          <button onClick={() => { setMode(m => m === 'login' ? 'signup' : 'login'); setErr(''); }}>
-            {mode === 'login' ? 'Sign Up' : 'Sign In'}
-          </button>
-        </p>
-
-        <p className="auth-footer">
-          Created by <strong>Vishesh Jaiswal</strong> · © 2025 Groovix
-        </p>
-      </div>
-    </div>
-  );
-}
+            type="submit"
+            className="btn-primary"
+            disabled={loading}

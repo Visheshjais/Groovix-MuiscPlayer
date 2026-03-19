@@ -5,12 +5,32 @@
  *  File:   src/context/index.jsx
  *
  *  Contains ALL React contexts used across the app:
- *    1. ThemeProvider    – dark / light mode toggle
- *    2. AuthProvider     – login / logout / guest session
- *    3. LikedProvider    – liked songs (localStorage)
- *    4. PlaylistProvider – playlists (localStorage)
- *    5. PlayerProvider   – THE CORE: YouTube IFrame API engine
- *    6. ToastProvider    – toast notification system
+ *    1. ThemeProvider    – dark / light mode (localStorage — unchanged)
+ *    2. AuthProvider     – real MongoDB login / logout / session restore
+ *    3. LikedProvider    – liked songs (MongoDB for logged-in, localStorage for guest)
+ *    4. PlaylistProvider – playlists (MongoDB for logged-in, localStorage for guest)
+ *    5. PlayerProvider   – YouTube IFrame API engine (unchanged)
+ *    6. ToastProvider    – toast notifications (unchanged)
+ *
+ *  ── WHAT CHANGED FROM LOCALSTORAGE VERSION ─────────────────
+ *
+ *  AuthProvider:
+ *    OLD: stored user in localStorage, no real password, no backend
+ *    NEW: calls /api/auth/login and /api/auth/register on backend
+ *         session stored as HTTP-only JWT cookie (gvx_token)
+ *         on app load, calls /api/auth/me to restore session from cookie
+ *         guest mode still works — guest user has isGuest: true flag
+ *
+ *  LikedProvider:
+ *    OLD: stored liked songs array in localStorage
+ *    NEW: logged-in users → synced with MongoDB via /api/liked
+ *         guest users    → still uses localStorage as fallback
+ *
+ *  PlaylistProvider:
+ *    OLD: stored playlists in localStorage
+ *    NEW: logged-in users → synced with MongoDB via /api/playlists
+ *         guest users    → still uses localStorage as fallback
+ *         playlist _id is MongoDB ObjectId (not Date.now() string)
  *
  *  ── HOW AUDIO + VIDEO SYNC WORKS ──────────────────────────
  *
@@ -30,18 +50,9 @@
  *
  *  ── WHY AUDIO DOESN'T STOP WHEN YOU CLOSE VIDEO MODE ──────
  *
- *  OLD BUG: We were hiding the video panel with height:0 + overflow:hidden.
- *  YouTube detects the iframe is clipped/invisible and PAUSES the video.
- *
- *  FIX: The video panel is now hidden with:
- *    opacity: 0
- *    pointerEvents: none
- *    position: absolute (taken out of layout flow)
+ *  The video panel is hidden with opacity:0 + position:absolute.
  *  This keeps the iframe visible to YouTube (not clipped),
- *  so audio keeps playing. The panel is just visually transparent.
- *
- *  When Video Mode opens → opacity:1, position in layout.
- *  When Video Mode closes → opacity:0, out of layout — audio continues.
+ *  so audio keeps playing even when panel is "closed".
  * ============================================================
  */
 
@@ -52,27 +63,23 @@ import {
 
 
 /* ══════════════════════════════════════════════
-   1.  THEME CONTEXT
+   1.  THEME CONTEXT  (unchanged)
    Persists choice in localStorage.
-   Sets data-theme attribute on <html> element,
-   which CSS variables read to apply the theme.
+   Sets data-theme on <html> for CSS variables.
    ══════════════════════════════════════════════ */
 const ThemeCtx = createContext(null);
 
 export function ThemeProvider({ children }) {
 
-  /* Read saved theme from localStorage, default to dark */
   const [theme, setTheme] = useState(
     () => localStorage.getItem('gvx-theme') || 'dark'
   );
 
-  /* Apply theme to <html> and save whenever it changes */
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
     localStorage.setItem('gvx-theme', theme);
   }, [theme]);
 
-  /* Toggle between dark and light */
   const toggle = () => setTheme(t => (t === 'dark' ? 'light' : 'dark'));
 
   return (
@@ -85,35 +92,101 @@ export const useTheme = () => useContext(ThemeCtx);
 
 
 /* ══════════════════════════════════════════════
-   2.  AUTH CONTEXT  (client-side only, no backend)
-   Stores user object in localStorage.
-   User shape: { name, email, initials }
+   2.  AUTH CONTEXT  (updated — real MongoDB backend)
+   ──────────────────────────────────────────────
+   Session stored as HTTP-only JWT cookie (gvx_token).
+   On app load: calls /api/auth/me to restore session.
+   login() handles both register and login modes.
+   loginAsGuest() creates a local guest object (no backend call).
+   logout() clears the cookie via /api/auth/logout.
    ══════════════════════════════════════════════ */
 const AuthCtx = createContext(null);
 
 export function AuthProvider({ children }) {
 
-  /* Load saved user on first render */
-  const [user, setUser] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('gvx-user')); }
-    catch { return null; }
-  });
+  /* Current logged-in user — null if not authenticated */
+  const [user,    setUser]    = useState(null);
 
-  /* Save user to state + localStorage */
-  const login = (name, email) => {
-    const u = { name, email, initials: name.slice(0, 2).toUpperCase() };
-    setUser(u);
-    localStorage.setItem('gvx-user', JSON.stringify(u));
+  /* Loading while checking existing session on app startup */
+  const [loading, setLoading] = useState(true);
+
+
+  /* ════════════════════════════════════════════
+     SESSION RESTORE — runs once on app load
+     ─────────────────────────────────────────────
+     Calls /api/auth/me with the existing gvx_token cookie.
+     If valid → restores user session silently.
+     If invalid/missing → user stays null (auth page shows).
+     Either way → sets loading false so app renders.
+  ════════════════════════════════════════════ */
+  useEffect(() => {
+    import('../services/api.js').then(({ apiGetMe }) => {
+      apiGetMe()
+        .then(res => { if (res.success) setUser(res.user); })
+        .catch(() => { /* cookie absent or expired — ignore */ })
+        .finally(() => setLoading(false));
+    });
+  }, []);
+
+
+  /* ════════════════════════════════════════════
+     login(email, password, mode, formData)
+     ─────────────────────────────────────────────
+     Unified function for register and login.
+     mode = 'login'    → calls apiLogin(email, password)
+     mode = 'register' → calls apiRegister(formData)
+
+     On success: sets user state.
+     On failure: throws error so Auth.jsx shows it inline.
+  ════════════════════════════════════════════ */
+  const login = async (email, password, mode = 'login', formData = null) => {
+    const { apiLogin, apiRegister } = await import('../services/api.js');
+
+    const res = mode === 'register'
+      ? await apiRegister(formData)
+      : await apiLogin(email, password);
+
+    if (!res.success) throw new Error(res.message);
+
+    /* Store user — cookie is set by backend automatically */
+    setUser(res.user);
   };
 
-  /* Clear user from state + localStorage */
-  const logout = () => {
+
+  /* ════════════════════════════════════════════
+     loginAsGuest()
+     ─────────────────────────────────────────────
+     No backend call — sets a local guest user object.
+     isGuest: true signals providers to use localStorage.
+  ════════════════════════════════════════════ */
+  const loginAsGuest = () => {
+    setUser({
+      name:    'Guest',
+      email:   'guest@groovix.app',
+      avatar:  '',
+      isGuest: true,
+    });
+  };
+
+
+  /* ════════════════════════════════════════════
+     logout()
+     ─────────────────────────────────────────────
+     Calls /api/auth/logout to clear JWT cookie on server.
+     Then clears user state locally.
+  ════════════════════════════════════════════ */
+  const logout = async () => {
+    const { apiLogout } = await import('../services/api.js');
+    await apiLogout();
     setUser(null);
-    localStorage.removeItem('gvx-user');
   };
+
+
+  /* Render nothing while checking session to avoid flash */
+  if (loading) return null;
 
   return (
-    <AuthCtx.Provider value={{ user, login, logout }}>
+    <AuthCtx.Provider value={{ user, login, loginAsGuest, logout }}>
       {children}
     </AuthCtx.Provider>
   );
@@ -122,34 +195,74 @@ export const useAuth = () => useContext(AuthCtx);
 
 
 /* ══════════════════════════════════════════════
-   3.  LIKED SONGS CONTEXT
-   Stores liked songs array in localStorage.
-   toggle(song) adds if not liked, removes if liked.
-   isLiked(videoId) returns true/false.
+   3.  LIKED SONGS CONTEXT  (updated)
+   ──────────────────────────────────────────────
+   Logged-in: liked songs fetched from / saved to MongoDB.
+   Guest:     localStorage fallback (original behaviour).
    ══════════════════════════════════════════════ */
 const LikedCtx = createContext(null);
 
 export function LikedProvider({ children }) {
 
-  /* Load liked songs from localStorage on first render */
-  const [liked, setLiked] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('gvx-liked')) || []; }
-    catch { return []; }
-  });
+  const [liked, setLiked] = useState([]);
+  const { user }          = useAuth();
 
-  /* Add song if not liked, remove if already liked */
-  const toggle = useCallback((song) => {
-    setLiked(prev => {
-      const exists = prev.find(s => s.videoId === song.videoId);
-      const next   = exists
-        ? prev.filter(s => s.videoId !== song.videoId)  /* remove */
-        : [song, ...prev];                               /* add at front */
-      localStorage.setItem('gvx-liked', JSON.stringify(next));
-      return next;
+
+  /* ════════════════════════════════════════════
+     Load liked songs whenever user changes
+     (login, logout, switch account)
+  ════════════════════════════════════════════ */
+  useEffect(() => {
+
+    /* Logged out — clear state */
+    if (!user) { setLiked([]); return; }
+
+    if (user.isGuest) {
+      /* Guest → localStorage fallback */
+      try { setLiked(JSON.parse(localStorage.getItem('gvx-liked')) || []); }
+      catch { setLiked([]); }
+      return;
+    }
+
+    /* Logged-in → fetch from MongoDB */
+    import('../services/api.js').then(({ apiGetLiked }) => {
+      apiGetLiked()
+        .then(res => { if (res.success) setLiked(res.songs); })
+        .catch(err => console.error('[LikedProvider] fetch error:', err));
     });
-  }, []);
 
-  /* Check if a videoId is in liked list */
+  }, [user]);
+
+
+  /* ════════════════════════════════════════════
+     toggle(song) — add or remove a liked song
+  ════════════════════════════════════════════ */
+  const toggle = useCallback(async (song) => {
+
+    if (!user) return;
+
+    if (user.isGuest) {
+      /* Guest: localStorage */
+      setLiked(prev => {
+        const exists = prev.find(s => s.videoId === song.videoId);
+        const next   = exists
+          ? prev.filter(s => s.videoId !== song.videoId)
+          : [song, ...prev];
+        localStorage.setItem('gvx-liked', JSON.stringify(next));
+        return next;
+      });
+      return;
+    }
+
+    /* Logged-in: sync with MongoDB */
+    const { apiToggleLiked } = await import('../services/api.js');
+    const res = await apiToggleLiked(song);
+    if (res.success) setLiked(res.songs);
+
+  }, [user]);
+
+
+  /* isLiked — fast local state check, no API call needed */
   const isLiked = useCallback(
     (id) => liked.some(s => s.videoId === id),
     [liked]
@@ -165,56 +278,150 @@ export const useLiked = () => useContext(LikedCtx);
 
 
 /* ══════════════════════════════════════════════
-   4.  PLAYLISTS CONTEXT
-   Playlists stored in localStorage as array.
-   Each playlist: { id, name, songs[], emoji }
+   4.  PLAYLISTS CONTEXT  (updated)
+   ──────────────────────────────────────────────
+   Logged-in: playlists fetched from / saved to MongoDB.
+   Guest:     localStorage fallback (original behaviour).
+
+   Note on IDs:
+     Logged-in → playlist._id is MongoDB ObjectId string
+     Guest     → playlist.id  is Date.now() string (legacy)
+   Both work — code checks p._id || p.id for compatibility.
    ══════════════════════════════════════════════ */
 const PlaylistCtx = createContext(null);
 
 export function PlaylistProvider({ children }) {
 
-  /* Load playlists from localStorage */
-  const [playlists, setPlaylists] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('gvx-pl')) || []; }
-    catch { return []; }
-  });
+  const [playlists, setPlaylists] = useState([]);
+  const { user }                  = useAuth();
 
-  /* Helper: save updated array to localStorage and return it */
-  const save = (p) => {
-    localStorage.setItem('gvx-pl', JSON.stringify(p));
-    return p;
+
+  /* ── Load playlists when user changes ── */
+  useEffect(() => {
+
+    if (!user) { setPlaylists([]); return; }
+
+    if (user.isGuest) {
+      try { setPlaylists(JSON.parse(localStorage.getItem('gvx-pl')) || []); }
+      catch { setPlaylists([]); }
+      return;
+    }
+
+    /* Logged-in → fetch from MongoDB */
+    import('../services/api.js').then(({ apiGetPlaylists }) => {
+      apiGetPlaylists()
+        .then(res => { if (res.success) setPlaylists(res.playlists); })
+        .catch(err => console.error('[PlaylistProvider] fetch error:', err));
+    });
+
+  }, [user]);
+
+
+  /* ════════════════════════════════════════════
+     create(name) — create a new empty playlist
+  ════════════════════════════════════════════ */
+  const create = async (name) => {
+    const emojis = ['🎵', '🎶', '🎸', '🎹', '🥁', '🎺', '🎻', '🎤'];
+    const emoji  = emojis[Math.floor(Math.random() * emojis.length)];
+
+    if (!user || user.isGuest) {
+      /* Guest: localStorage */
+      const p = { id: Date.now().toString(), name, songs: [], emoji };
+      setPlaylists(prev => {
+        const next = [p, ...prev];
+        localStorage.setItem('gvx-pl', JSON.stringify(next));
+        return next;
+      });
+      return p;
+    }
+
+    /* Logged-in: sync with MongoDB */
+    const { apiCreatePlaylist } = await import('../services/api.js');
+    const res = await apiCreatePlaylist(name, emoji);
+    if (res.success) {
+      setPlaylists(prev => [res.playlist, ...prev]);
+      return res.playlist;
+    }
   };
 
-  /* Create a new empty playlist with random emoji */
-  const create = (name) => {
-    const emojis = ['🎵','🎶','🎸','🎹','🥁','🎺','🎻','🎤'];
-    const p = {
-      id:    Date.now().toString(),
-      name,
-      songs: [],
-      emoji: emojis[Math.floor(Math.random() * emojis.length)],
-    };
-    setPlaylists(prev => save([p, ...prev]));
-    return p;
+
+  /* ════════════════════════════════════════════
+     addSong(pid, song) — add song to playlist
+  ════════════════════════════════════════════ */
+  const addSong = async (pid, song) => {
+
+    if (!user || user.isGuest) {
+      /* Guest: localStorage */
+      setPlaylists(prev => {
+        const next = prev.map(p =>
+          (p.id === pid || p._id === pid) && !p.songs.find(s => s.videoId === song.videoId)
+            ? { ...p, songs: [...p.songs, song] }
+            : p
+        );
+        localStorage.setItem('gvx-pl', JSON.stringify(next));
+        return next;
+      });
+      return;
+    }
+
+    /* Logged-in: sync with MongoDB */
+    const { apiAddSongToPlaylist } = await import('../services/api.js');
+    const res = await apiAddSongToPlaylist(pid, song);
+    if (res.success) {
+      setPlaylists(prev => prev.map(p => p._id === pid ? res.playlist : p));
+    }
   };
 
-  /* Add a song to a playlist (no duplicates) */
-  const addSong = (pid, song) =>
-    setPlaylists(prev => save(prev.map(p =>
-      p.id === pid && !p.songs.find(s => s.videoId === song.videoId)
-        ? { ...p, songs: [...p.songs, song] }
-        : p
-    )));
 
-  /* Remove a song from a playlist by videoId */
-  const removeSong = (pid, vid) =>
-    setPlaylists(prev => save(prev.map(p =>
-      p.id === pid ? { ...p, songs: p.songs.filter(s => s.videoId !== vid) } : p
-    )));
+  /* ════════════════════════════════════════════
+     removeSong(pid, videoId) — remove song from playlist
+  ════════════════════════════════════════════ */
+  const removeSong = async (pid, vid) => {
 
-  /* Delete an entire playlist */
-  const remove = (id) =>
-    setPlaylists(prev => save(prev.filter(p => p.id !== id)));
+    if (!user || user.isGuest) {
+      /* Guest: localStorage */
+      setPlaylists(prev => {
+        const next = prev.map(p =>
+          (p.id === pid || p._id === pid)
+            ? { ...p, songs: p.songs.filter(s => s.videoId !== vid) }
+            : p
+        );
+        localStorage.setItem('gvx-pl', JSON.stringify(next));
+        return next;
+      });
+      return;
+    }
+
+    /* Logged-in: sync with MongoDB */
+    const { apiRemoveSongFromPlaylist } = await import('../services/api.js');
+    const res = await apiRemoveSongFromPlaylist(pid, vid);
+    if (res.success) {
+      setPlaylists(prev => prev.map(p => p._id === pid ? res.playlist : p));
+    }
+  };
+
+
+  /* ════════════════════════════════════════════
+     remove(id) — delete entire playlist
+  ════════════════════════════════════════════ */
+  const remove = async (id) => {
+
+    if (!user || user.isGuest) {
+      /* Guest: localStorage */
+      setPlaylists(prev => {
+        const next = prev.filter(p => p.id !== id && p._id !== id);
+        localStorage.setItem('gvx-pl', JSON.stringify(next));
+        return next;
+      });
+      return;
+    }
+
+    /* Logged-in: sync with MongoDB */
+    const { apiDeletePlaylist } = await import('../services/api.js');
+    await apiDeletePlaylist(id);
+    setPlaylists(prev => prev.filter(p => p._id !== id));
+  };
+
 
   return (
     <PlaylistCtx.Provider value={{ playlists, create, addSong, removeSong, remove }}>
@@ -226,92 +433,63 @@ export const usePlaylists = () => useContext(PlaylistCtx);
 
 
 /* ══════════════════════════════════════════════
-   5.  PLAYER CONTEXT  ← THE CORE ENGINE
-   ══════════════════════════════════════════════
-
-   Internal refs (not state — don't cause re-renders):
-     ytPlayer  → the live window.YT.Player JS object
-     readyRef  → becomes true after onReady fires
-     pollRef   → setInterval id for time/duration polling
-     pendingId → videoId to load once player becomes ready
+   5.  PLAYER CONTEXT  ← THE CORE ENGINE  (unchanged)
    ══════════════════════════════════════════════ */
 const PlayerCtx = createContext(null);
 
 export function PlayerProvider({ children }) {
 
-  /* ── Playback queue state ── */
-  const [queue,     setQueue]     = useState([]);   /* all songs loaded */
-  const [idx,       setIdx]       = useState(0);    /* current song index */
+  const [queue,     setQueue]     = useState([]);
+  const [idx,       setIdx]       = useState(0);
   const [playing,   setPlaying]   = useState(false);
   const [volume,    setVolRaw]    = useState(80);
   const [shuffle,   setShuffle]   = useState(false);
   const [repeat,    setRepeat]    = useState(false);
   const [videoOpen, setVideoOpen] = useState(false);
+  const [time,      setTime]      = useState(0);
+  const [dur,       setDur]       = useState(0);
 
-  /* ── Progress state — polled from YT player every 500ms ── */
-  const [time, setTime] = useState(0);  /* current position in seconds */
-  const [dur,  setDur]  = useState(0);  /* total duration in seconds */
+  const ytPlayer  = useRef(null);
+  const readyRef  = useRef(false);
+  const pollRef   = useRef(null);
+  const pendingId = useRef(null);
 
-  /* ── Refs for YT player management ── */
-  const ytPlayer  = useRef(null);   /* YT.Player instance */
-  const readyRef  = useRef(false);  /* true after onReady fires */
-  const pollRef   = useRef(null);   /* setInterval handle */
-  const pendingId = useRef(null);   /* videoId queued before player ready */
-
-  /* Derived: the song at current index */
   const current = queue[idx] || null;
 
-  /* ════════════════════════════════════════════
-     Initialize YouTube IFrame Player API
-     ─────────────────────────────────────────────
-     Called once on component mount.
-     Waits for window.YT to be defined (from index.html script tag).
-     Creates ONE YT.Player in the #yt-player-slot div.
-  ════════════════════════════════════════════ */
   useEffect(() => {
     const initPlayer = () => {
-      if (ytPlayer.current) return; /* guard: don't create twice */
+      if (ytPlayer.current) return;
 
       ytPlayer.current = new window.YT.Player('yt-player-slot', {
         height: '100%',
         width:  '100%',
         playerVars: {
-          autoplay:        1,   /* start playing when video loads */
-          controls:        0,   /* HIDE YouTube's own control bar */
-          disablekb:       1,   /* disable YouTube keyboard shortcuts */
-          fs:              0,   /* hide YouTube fullscreen button */
-          iv_load_policy:  3,   /* hide video annotations */
-          modestbranding:  1,   /* minimal YouTube logo */
-          rel:             0,   /* don't show related videos */
-          showinfo:        0,   /* hide title overlay */
-          playsinline:     1,   /* prevent fullscreen on mobile — important for HTTPS */
-          cc_load_policy:  0,   /* hide captions */
-          enablejsapi:     1,   /* enable JS API control — required for HTTPS/Netlify */
-          origin:          window.location.origin, /* tell YouTube our domain — prevents CORS block */
+          autoplay:       1,
+          controls:       0,
+          disablekb:      1,
+          fs:             0,
+          iv_load_policy: 3,
+          modestbranding: 1,
+          rel:            0,
+          showinfo:       0,
+          playsinline:    1,
+          cc_load_policy: 0,
+          enablejsapi:    1,
+          origin:         window.location.origin,
         },
-
         events: {
-
-          /* ── onReady: YT.Player is fully initialized ── */
           onReady: (e) => {
             readyRef.current = true;
-            e.target.setVolume(volume); /* apply initial volume */
-
-            /* If a song was queued before player was ready, load it now */
+            e.target.setVolume(volume);
             if (pendingId.current) {
               e.target.loadVideoById(pendingId.current);
               pendingId.current = null;
             }
           },
-
-          /* ── onStateChange: YT fires this on play/pause/end ── */
           onStateChange: (e) => {
             const S = window.YT.PlayerState;
-
-            /* ── Song started playing ── */
             if (e.data === S.PLAYING) {
               setPlaying(true);
-              /* Poll time and duration every 500ms to update progress bar */
               clearInterval(pollRef.current);
               pollRef.current = setInterval(() => {
                 if (!ytPlayer.current?.getCurrentTime) return;
@@ -319,100 +497,66 @@ export function PlayerProvider({ children }) {
                 setDur(Math.floor(ytPlayer.current.getDuration()));
               }, 500);
             }
-
-            /* ── Song was paused ── */
             if (e.data === S.PAUSED) {
               setPlaying(false);
-              clearInterval(pollRef.current); /* stop polling when paused */
+              clearInterval(pollRef.current);
             }
-
-            /* ── Song ended — auto advance to next track ── */
             if (e.data === S.ENDED) {
               clearInterval(pollRef.current);
               setPlaying(false);
               setTime(0);
-              /* Advance index based on shuffle/repeat setting */
               setIdx(i => {
                 if (queue.length === 0) return i;
                 if (shuffle) return Math.floor(Math.random() * queue.length);
                 if (repeat)  return (i + 1) % queue.length;
                 return Math.min(i + 1, queue.length - 1);
               });
-              setTimeout(() => setPlaying(true), 80); /* tiny delay for state to settle */
+              setTimeout(() => setPlaying(true), 80);
             }
           },
         },
       });
     };
 
-    /* YT API script may already be loaded (e.g. Vite hot-reload in dev) */
     if (window.YT && window.YT.Player) {
       initPlayer();
     } else {
-      /* Otherwise wait for YouTube's own ready callback */
       window.onYouTubeIframeAPIReady = initPlayer;
     }
 
-    /* Cleanup: stop polling interval when app unmounts */
     return () => clearInterval(pollRef.current);
-  }, []); /* run only once on mount */
+  }, []);
 
-
-  /* ════════════════════════════════════════════
-     Load new song when current song changes
-     (i.e. when idx or queue changes)
-  ════════════════════════════════════════════ */
   useEffect(() => {
     if (!current) return;
-
-    /* Reset progress display right away */
     setTime(0);
     setDur(0);
-
     if (readyRef.current && ytPlayer.current) {
-      /* Player is ready — load video immediately */
       ytPlayer.current.loadVideoById(current.videoId);
       ytPlayer.current.setVolume(volume);
     } else {
-      /* Player not ready yet — save videoId to load once ready */
       pendingId.current = current.videoId;
     }
-  }, [current?.videoId]); /* only re-run when the actual video changes */
+  }, [current?.videoId]);
 
-
-  /* ════════════════════════════════════════════
-     Volume control
-     Pushes volume change to the YT player instance
-  ════════════════════════════════════════════ */
   const setVolume = useCallback((v) => {
     setVolRaw(v);
     if (ytPlayer.current && readyRef.current) {
       ytPlayer.current.setVolume(v);
-      /* Also mute/unmute so 0% actually silences it */
       if (v === 0) ytPlayer.current.mute?.();
       else         ytPlayer.current.unMute?.();
     }
   }, []);
 
-
-  /* ════════════════════════════════════════════
-     play(song, newQueue?)
-     ─────────────────────────────────────────────
-     Loads a song into the player.
-     If newQueue is provided, replaces the entire queue.
-     If not, adds song to existing queue (or seeks to it if already there).
-  ════════════════════════════════════════════ */
   const play = useCallback((song, newQueue = null) => {
     if (newQueue && newQueue.length > 0) {
-      /* Replace queue with new list, find the song's position */
       const i = newQueue.findIndex(s => s.videoId === song.videoId);
       setQueue(newQueue);
       setIdx(i >= 0 ? i : 0);
     } else {
-      /* Add to existing queue (or seek if already present) */
       const existing = queue.findIndex(s => s.videoId === song.videoId);
       if (existing >= 0) {
-        setIdx(existing); /* already in queue — just switch to it */
+        setIdx(existing);
       } else {
         setQueue(q => {
           const n = [...q, song];
@@ -424,8 +568,6 @@ export function PlayerProvider({ children }) {
     setPlaying(true);
   }, [queue]);
 
-
-  /* ── Next track (respects shuffle + repeat) ── */
   const next = useCallback(() => {
     if (queue.length === 0) return;
     setIdx(i => {
@@ -437,38 +579,22 @@ export function PlayerProvider({ children }) {
     setTime(0);
   }, [queue.length, shuffle, repeat]);
 
-
-  /* ── Previous track ── */
   const prev = useCallback(() => {
-    if (idx > 0) {
-      setIdx(i => i - 1);
-      setPlaying(true);
-      setTime(0);
-    }
+    if (idx > 0) { setIdx(i => i - 1); setPlaying(true); setTime(0); }
   }, [idx]);
 
-
-  /* ── Toggle play / pause — calls real YT API ── */
   const togglePlay = useCallback(() => {
     if (!ytPlayer.current || !readyRef.current) return;
-    if (playing) {
-      ytPlayer.current.pauseVideo(); /* pause the YT player */
-      setPlaying(false);
-    } else {
-      ytPlayer.current.playVideo();  /* resume the YT player */
-      setPlaying(true);
-    }
+    if (playing) { ytPlayer.current.pauseVideo(); setPlaying(false); }
+    else         { ytPlayer.current.playVideo();  setPlaying(true);  }
   }, [playing]);
 
-
-  /* ── Seek to a specific second — calls real YT API ── */
   const seekTo = useCallback((sec) => {
     if (ytPlayer.current && readyRef.current) {
-      ytPlayer.current.seekTo(sec, true); /* true = allow seek ahead of buffer */
+      ytPlayer.current.seekTo(sec, true);
       setTime(sec);
     }
   }, []);
-
 
   return (
     <PlayerCtx.Provider value={{
@@ -485,7 +611,7 @@ export const usePlayer = () => useContext(PlayerCtx);
 
 
 /* ══════════════════════════════════════════════
-   6.  TOAST CONTEXT  — short notification popups
+   6.  TOAST CONTEXT  (unchanged)
    show("message") displays a toast for 2.6 seconds.
    ══════════════════════════════════════════════ */
 const ToastCtx = createContext(null);
@@ -493,7 +619,6 @@ const ToastCtx = createContext(null);
 export function ToastProvider({ children }) {
   const [toast, setToast] = useState(null);
 
-  /* Show a message then auto-dismiss after 2600ms */
   const show = useCallback((msg) => {
     setToast(msg);
     setTimeout(() => setToast(null), 2600);
@@ -502,7 +627,6 @@ export function ToastProvider({ children }) {
   return (
     <ToastCtx.Provider value={{ show }}>
       {children}
-      {/* Render the toast notification if one is active */}
       {toast && (
         <div className="toast">
           <span className="ti">✦</span>
