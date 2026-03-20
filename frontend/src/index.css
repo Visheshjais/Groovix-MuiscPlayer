@@ -1024,4 +1024,8 @@ html, body, #root {
    Thin bar pinned to top of main area.
    Width set dynamically via JS onScroll.
 ════════════════════════════════════════════ */
+<<<<<<< HEAD
 #scroll-bar { position:fixed; top:0; left:var(--sidebar-w); height:3px; width:0%; background:linear-gradient(to right,var(--accent),var(--accent2)); z-index:999; transition:width 0.1s linear; border-radius:0 2px 2px 0; }
+=======
+#scroll-bar { position:fixed; top:0; left:var(--sidebar-w); height:3px; width:0%; background:linear-gradient(to right,var(--accent),var(--accent2)); z-index:999; transition:width 0.1s linear; border-radius:0 2px 2px 0; }
+>>>>>>> 92063397a39c1b3a92c69706904a07b1b463fa92
