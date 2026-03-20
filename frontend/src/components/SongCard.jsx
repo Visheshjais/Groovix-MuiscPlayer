@@ -27,7 +27,7 @@
  *    Dropdown is rendered via ReactDOM.createPortal into document.body
  *    so it is never clipped by carousel overflow.
  *    Position is calculated from the + FAB button's bounding rect.
- *    Uses fixed positioning so it scrolls with the page correctly.
+ *    Uses fixed positioning so it follows the button while scrolling.
  * ============================================================
  */
 
@@ -86,6 +86,27 @@ export default function SongCard({ song, queue = [] }) {
 
 
   /* ════════════════════════════════════════════
+     REPOSITION ON SCROLL
+     ─────────────────────────────────────────────
+     When dropdown is open, recalculates position
+     on every scroll event so the dropdown follows
+     the + FAB button as the page scrolls.
+  ════════════════════════════════════════════ */
+  useEffect(() => {
+    if (!dropOpen) return;
+
+    const handleScroll = () => {
+      if (!fabRef.current) return;
+      const rect = fabRef.current.getBoundingClientRect();
+      setDropPos({ top: rect.top, left: rect.right });
+    };
+
+    window.addEventListener('scroll', handleScroll, true);
+    return () => window.removeEventListener('scroll', handleScroll, true);
+  }, [dropOpen]);
+
+
+  /* ════════════════════════════════════════════
      OPEN DROPDOWN — calculate position from FAB
      ─────────────────────────────────────────────
      Gets the bounding rect of the + FAB button.
@@ -100,7 +121,7 @@ export default function SongCard({ song, queue = [] }) {
     const rect = fabRef.current.getBoundingClientRect();
     setDropPos({
       top:  rect.top,   /* viewport-relative — used with fixed positioning */
-      left: rect.right, /* align right edge of dropdown to right edge of FAB */
+      left: rect.right, /* align to right edge of FAB                      */
     });
     setDropOpen(true);
   };
@@ -197,18 +218,18 @@ export default function SongCard({ song, queue = [] }) {
           key={p._id || p.id}
           onClick={e => handleAddToPlaylist(e, p._id || p.id)}
           style={{
-            display:     'flex',
-            alignItems:  'center',
-            gap:         '8px',
-            width:       '100%',
-            padding:     '9px 14px',
-            border:      'none',
-            background:  'transparent',
-            color:       '#e8eaf6',
-            fontSize:    '13px',
-            fontFamily:  'Outfit, sans-serif',
-            textAlign:   'left',
-            cursor:      'pointer',
+            display:    'flex',
+            alignItems: 'center',
+            gap:        '8px',
+            width:      '100%',
+            padding:    '9px 14px',
+            border:     'none',
+            background: 'transparent',
+            color:      '#e8eaf6',
+            fontSize:   '13px',
+            fontFamily: 'Outfit, sans-serif',
+            textAlign:  'left',
+            cursor:     'pointer',
           }}
           onMouseEnter={e => e.currentTarget.style.background = '#1a2035'}
           onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
@@ -226,11 +247,11 @@ export default function SongCard({ song, queue = [] }) {
       {/* New playlist — inline input or button */}
       {creating ? (
         <div style={{
-          display:      'flex',
-          alignItems:   'center',
-          gap:          '6px',
-          padding:      '8px 10px',
-          borderTop:    '1px solid #1e2a42',
+          display:   'flex',
+          alignItems:'center',
+          gap:       '6px',
+          padding:   '8px 10px',
+          borderTop: '1px solid #1e2a42',
         }}>
           <input
             autoFocus
