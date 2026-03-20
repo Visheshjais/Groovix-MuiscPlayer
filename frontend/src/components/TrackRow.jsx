@@ -144,7 +144,7 @@ export default function TrackRow({ song, index, queue = [], showAddPlaylist = fa
       onClick={e => e.stopPropagation()}
       style={{
         position:     'fixed',
-        top:          `${dropPos.top - 230}px`,
+        top:          `${dropPos.top - 10}px`,
         left:         `${dropPos.left - 210}px`,
         zIndex:       9999,
         minWidth:     '210px',
