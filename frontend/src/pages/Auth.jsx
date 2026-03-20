@@ -6,8 +6,7 @@
  *
  *  Three modes:
  *    login  → email + password → POST /api/auth/login
- *    signup → name + email + password + optional avatar
- *             → POST /api/auth/register (multipart/form-data)
+ *    signup → name + email + password → POST /api/auth/register
  *    guest  → no server call, sets a local guest user object
  *
  *  On success:
@@ -19,8 +18,8 @@
  * ============================================================
  */
 
-import { useState, useRef } from 'react';
-import { useAuth }          from '../context';
+import { useState } from 'react';
+import { useAuth }  from '../context';
 
 export default function Auth() {
 
@@ -36,9 +35,6 @@ export default function Auth() {
   const [err,     setErr]     = useState('');
   const [loading, setLoading] = useState(false);
 
-  /* ── Ref for the file input (avatar upload in signup mode) ── */
-  const fileRef = useRef(null);
-
   /* ── Auth context: login() handles both register and login ── */
   const { login, loginAsGuest } = useAuth();
 
@@ -46,8 +42,8 @@ export default function Auth() {
   /* ════════════════════════════════════════════
      FORM SUBMIT HANDLER
      ─────────────────────────────────────────────
-     signup: builds FormData so avatar image can be
-             sent as multipart/form-data to backend.
+     signup: sends JSON with name, email, password
+             to POST /api/auth/register
      login:  calls login(email, password) which calls
              apiLogin() from the API service.
 
@@ -61,19 +57,12 @@ export default function Auth() {
     try {
       if (mode === 'signup') {
 
-        /* ── Build FormData for multipart avatar upload ── */
-        const formData = new FormData();
-        formData.append('name',     name.trim());
-        formData.append('email',    email.trim());
-        formData.append('password', pass);
-
-        /* Only attach avatar if user selected a file */
-        if (fileRef.current?.files[0]) {
-          formData.append('avatar', fileRef.current.files[0]);
-        }
-
-        /* Call AuthProvider login() in register mode */
-        await login(null, null, 'register', formData);
+        /* ── Build JSON payload for register ── */
+        await login(null, null, 'register', {
+          name:     name.trim(),
+          email:    email.trim(),
+          password: pass,
+        });
 
       } else {
         /* ── Login mode: email + password only ── */
@@ -155,21 +144,6 @@ export default function Auth() {
               required
             />
           </div>
-
-          {/* Avatar upload — signup mode only, optional */}
-          {mode === 'signup' && (
-            <div className="field">
-              <label>
-                Profile Photo
-                <span style={{ opacity: 0.5, marginLeft: 6 }}>(optional)</span>
-              </label>
-              <input
-                type="file"
-                accept="image/*"
-                ref={fileRef}
-              />
-            </div>
-          )}
 
           {/* Inline error message from backend */}
           {err && <div className="auth-err">⚠ {err}</div>}
