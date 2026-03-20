@@ -93,8 +93,8 @@ export default function SongCard({ song, queue = [] }) {
 
     const rect = fabRef.current.getBoundingClientRect();
     setDropPos({
-      top:  rect.top - 8,   // just above the FAB
-      left: rect.left,
+      top:  rect.top + window.scrollY,
+      left: rect.left + window.scrollX,
     });
     setDropOpen(true);
   };
@@ -143,11 +143,11 @@ export default function SongCard({ song, queue = [] }) {
       className="pl-dropdown"
       style={{
         position: 'fixed',
-        top:      dropPos.top,
-        left:     dropPos.left,
-        transform: 'translateY(-100%)',
+        top:      dropPos.top - 8,
+        left:     dropPos.left - 160,
         zIndex:   9999,
-      }}
+        minWidth: '200px',
+}}
       onClick={e => e.stopPropagation()}
     >
       <div className="pl-drop-title">Add to playlist</div>
