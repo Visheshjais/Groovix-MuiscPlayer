@@ -23,30 +23,36 @@
  *       Type name + Enter → creates playlist AND adds song in one step
  *    4. Clicking outside → dropdown closes cleanly
  *
- *  Works for both:
- *    - Logged-in users  → synced with MongoDB via context
- *    - Guest users      → saved to localStorage via context
+ *  Portal fix:
+ *    Dropdown is rendered via ReactDOM.createPortal into document.body
+ *    so it is never clipped by carousel overflow.
+ *    Position is calculated from the + FAB button's bounding rect.
  * ============================================================
  */
 
 import { useState, useRef, useEffect } from 'react';
+import { createPortal }                from 'react-dom';
 import { usePlayer, useLiked, useToast, usePlaylists } from '../context';
 
 export default function SongCard({ song, queue = [] }) {
 
   /* ── Pull required context values ── */
-  const { play, current, playing }     = usePlayer();    // playback controls
-  const { toggle, isLiked }            = useLiked();     // liked songs state
-  const { show }                       = useToast();     // toast notifications
-  const { playlists, addSong, create } = usePlaylists(); // playlist CRUD
+  const { play, current, playing }     = usePlayer();
+  const { toggle, isLiked }            = useLiked();
+  const { show }                       = useToast();
+  const { playlists, addSong, create } = usePlaylists();
 
   /* ── Local state for the Add to Playlist dropdown ── */
-  const [dropOpen, setDropOpen] = useState(false); // is the dropdown visible?
-  const [creating, setCreating] = useState(false); // is the "new playlist" input shown?
-  const [newName,  setNewName]  = useState('');    // value of the new playlist name input
+  const [dropOpen, setDropOpen] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [newName,  setNewName]  = useState('');
 
-  /* Ref on the dropdown wrapper — used for click-outside detection */
-  const dropRef = useRef(null);
+  /* ── Position of the dropdown (calculated from FAB position) ── */
+  const [dropPos,  setDropPos]  = useState({ top: 0, left: 0 });
+
+  /* Refs */
+  const dropRef = useRef(null);  // dropdown panel ref (for outside click)
+  const fabRef  = useRef(null);  // + FAB button ref (for position calculation)
 
   /* Is this card the currently loaded track? */
   const active = current?.videoId === song.videoId;
@@ -54,17 +60,15 @@ export default function SongCard({ song, queue = [] }) {
 
   /* ════════════════════════════════════════════
      CLICK OUTSIDE — close dropdown
-     ─────────────────────────────────────────────
-     When dropdown is open, attach a mousedown listener to
-     the document. If the click lands outside dropRef, close
-     and reset all dropdown state.
-     Cleanup removes the listener when dropdown closes.
   ════════════════════════════════════════════ */
   useEffect(() => {
     if (!dropOpen) return;
 
     const handler = (e) => {
-      if (dropRef.current && !dropRef.current.contains(e.target)) {
+      if (
+        dropRef.current && !dropRef.current.contains(e.target) &&
+        fabRef.current  && !fabRef.current.contains(e.target)
+      ) {
         setDropOpen(false);
         setCreating(false);
         setNewName('');
@@ -77,43 +81,120 @@ export default function SongCard({ song, queue = [] }) {
 
 
   /* ════════════════════════════════════════════
-     handleAddToPlaylist(e, pid)
+     OPEN DROPDOWN — calculate position from FAB
      ─────────────────────────────────────────────
-     Called when user clicks an existing playlist row.
-     pid = playlist._id (MongoDB) or playlist.id (guest)
-     stopPropagation stops the card click (song play) from firing.
+     Gets the bounding rect of the + FAB button and
+     positions the dropdown above it using fixed coords.
+     This works even inside overflow:hidden containers.
+  ════════════════════════════════════════════ */
+  const openDrop = (e) => {
+    e.stopPropagation();
+    if (dropOpen) { setDropOpen(false); return; }
+
+    const rect = fabRef.current.getBoundingClientRect();
+    setDropPos({
+      top:  rect.top - 8,   // just above the FAB
+      left: rect.left,
+    });
+    setDropOpen(true);
+  };
+
+
+  /* ════════════════════════════════════════════
+     handleAddToPlaylist(e, pid)
   ════════════════════════════════════════════ */
   const handleAddToPlaylist = async (e, pid) => {
     e.stopPropagation();
-    await addSong(pid, song);   // add this song to the chosen playlist
-    show('Added to playlist!'); // success toast
-    setDropOpen(false);         // close dropdown
+    await addSong(pid, song);
+    show('Added to playlist!');
+    setDropOpen(false);
   };
 
 
   /* ════════════════════════════════════════════
      handleCreate(e)
-     ─────────────────────────────────────────────
-     Called when user presses Enter or clicks the checkmark.
-     1. Creates a new playlist with the typed name
-     2. Immediately adds this song to it
-     3. Shows a toast, resets input, closes dropdown
   ════════════════════════════════════════════ */
   const handleCreate = async (e) => {
     e.stopPropagation();
     if (!newName.trim()) return;
 
-    const p = await create(newName.trim());  // create playlist → returns new playlist object
+    const p = await create(newName.trim());
     if (p) {
-      await addSong(p._id || p.id, song);    // works with both MongoDB _id and guest id
+      await addSong(p._id || p.id, song);
       show(`Added to "${newName.trim()}"!`);
     }
 
-    /* Reset all state */
     setNewName('');
     setCreating(false);
     setDropOpen(false);
   };
+
+
+  /* ════════════════════════════════════════════
+     PORTAL DROPDOWN
+     ─────────────────────────────────────────────
+     Rendered into document.body so it escapes
+     any overflow:hidden parent containers.
+     Uses fixed positioning based on FAB coords.
+  ════════════════════════════════════════════ */
+  const dropdownPortal = dropOpen && createPortal(
+    <div
+      ref={dropRef}
+      className="pl-dropdown"
+      style={{
+        position: 'fixed',
+        top:      dropPos.top,
+        left:     dropPos.left,
+        transform: 'translateY(-100%)',
+        zIndex:   9999,
+      }}
+      onClick={e => e.stopPropagation()}
+    >
+      <div className="pl-drop-title">Add to playlist</div>
+
+      {playlists.length === 0 && !creating && (
+        <div className="pl-drop-empty">No playlists yet</div>
+      )}
+
+      {playlists.map(p => (
+        <button
+          key={p._id || p.id}
+          className="pl-drop-item"
+          onClick={e => handleAddToPlaylist(e, p._id || p.id)}
+        >
+          <span>{p.emoji || '🎵'}</span>
+          <span className="pl-drop-name">{p.name}</span>
+          <span className="pl-drop-count">{p.songs?.length || 0}</span>
+        </button>
+      ))}
+
+      {creating ? (
+        <div className="pl-drop-new">
+          <input
+            autoFocus
+            className="pl-drop-input"
+            placeholder="Playlist name..."
+            value={newName}
+            onChange={e => setNewName(e.target.value)}
+            onKeyDown={e => {
+              if (e.key === 'Enter')  handleCreate(e);
+              if (e.key === 'Escape') { setCreating(false); setNewName(''); }
+            }}
+            onClick={e => e.stopPropagation()}
+          />
+          <button className="pl-drop-save" onClick={handleCreate}>✓</button>
+        </div>
+      ) : (
+        <button
+          className="pl-drop-create"
+          onClick={e => { e.stopPropagation(); setCreating(true); }}
+        >
+          ＋ New playlist
+        </button>
+      )}
+    </div>,
+    document.body
+  );
 
 
   return (
@@ -146,9 +227,7 @@ export default function SongCard({ song, queue = [] }) {
         )}
 
         {/* ════════════════════════════════════════════
-            LIKE FAB
-            stopPropagation() prevents triggering the card
-            click which would start playing the song.
+            LIKE FAB — top-left of thumbnail
         ════════════════════════════════════════════ */}
         <button
           className="card-like-fab"
@@ -165,80 +244,26 @@ export default function SongCard({ song, queue = [] }) {
         </button>
 
         {/* ════════════════════════════════════════════
-            ADD TO PLAYLIST FAB + DROPDOWN
-            ─────────────────────────────────────────────
-            Wrapper div holds both the + button and dropdown.
-            ref={dropRef} for outside-click detection.
-            stopPropagation so card click doesn't fire.
+            ADD TO PLAYLIST FAB — bottom-right of thumbnail
+            + FAB button ref'd for position calculation.
+            Dropdown rendered via portal into document.body.
         ════════════════════════════════════════════ */}
         <div
           className="card-pl-wrap"
-          ref={dropRef}
           onClick={e => e.stopPropagation()}
         >
-
-          {/* + FAB button — appears on hover, toggles dropdown */}
           <button
+            ref={fabRef}
             className="card-pl-fab"
             title="Add to playlist"
-            onClick={e => { e.stopPropagation(); setDropOpen(o => !o); }}
+            onClick={openDrop}
           >
             ＋
           </button>
-
-          {/* Dropdown panel */}
-          {dropOpen && (
-            <div className="pl-dropdown">
-
-              <div className="pl-drop-title">Add to playlist</div>
-
-              {/* Empty state */}
-              {playlists.length === 0 && !creating && (
-                <div className="pl-drop-empty">No playlists yet</div>
-              )}
-
-              {/* Existing playlists */}
-              {playlists.map(p => (
-                <button
-                  key={p._id || p.id}
-                  className="pl-drop-item"
-                  onClick={e => handleAddToPlaylist(e, p._id || p.id)}
-                >
-                  <span>{p.emoji || '🎵'}</span>
-                  <span className="pl-drop-name">{p.name}</span>
-                  <span className="pl-drop-count">{p.songs?.length || 0}</span>
-                </button>
-              ))}
-
-              {/* New playlist — inline input or button */}
-              {creating ? (
-                <div className="pl-drop-new">
-                  <input
-                    autoFocus
-                    className="pl-drop-input"
-                    placeholder="Playlist name..."
-                    value={newName}
-                    onChange={e => setNewName(e.target.value)}
-                    onKeyDown={e => {
-                      if (e.key === 'Enter')  handleCreate(e);
-                      if (e.key === 'Escape') { setCreating(false); setNewName(''); }
-                    }}
-                    onClick={e => e.stopPropagation()}
-                  />
-                  <button className="pl-drop-save" onClick={handleCreate}>✓</button>
-                </div>
-              ) : (
-                <button
-                  className="pl-drop-create"
-                  onClick={e => { e.stopPropagation(); setCreating(true); }}
-                >
-                  ＋ New playlist
-                </button>
-              )}
-
-            </div>
-          )}
         </div>
+
+        {/* Portal dropdown — rendered outside carousel DOM */}
+        {dropdownPortal}
 
       </div>
 
