@@ -560,7 +560,7 @@ html, body, #root {
 /* ════════════════════════════════════════════
    11. CAROUSEL
 ════════════════════════════════════════════ */
-.carousel { display:flex; gap:14px; overflow-x:auto; padding-bottom:4px; scroll-snap-type:x mandatory; }
+.carousel { display:flex; gap:14px; overflow-x:auto; overflow-y:visible; padding-bottom:4px; scroll-snap-type:x mandatory; }
 .carousel::-webkit-scrollbar { height:0; }
 
 
@@ -908,7 +908,7 @@ html, body, #root {
 .vbtn            { padding:7px 14px; border-radius:var(--r); background:var(--surface); border:1px solid var(--border); color:var(--text2); cursor:pointer; font-size:13px; font-family:var(--font-b); font-weight:500; transition:all var(--t); }
 .vbtn.on         { background:var(--accent); color:#fff; border-color:var(--accent); }
 .pl-grid         { display:grid; grid-template-columns:repeat(auto-fill,minmax(190px,1fr)); gap:18px; margin-bottom:28px; }
-.pl-card         { background:var(--surface); border:1px solid var(--border); border-radius:var(--r2); padding:22px; cursor:pointer; transition:all var(--t2) var(--ease); position:relative; overflow:hidden; }
+.pl-card         { background:var(--surface); border:1px solid var(--border); border-radius:var(--r2); padding:22px; cursor:pointer; transition:all var(--t2) var(--ease); position:relative; overflow:visible; }
 .pl-card::after  { content:''; position:absolute; inset:0; background:linear-gradient(135deg,rgba(var(--accentR),0.06),transparent); opacity:0; transition:opacity var(--t); }
 .pl-card:hover   { transform:translateY(-4px); border-color:var(--border2); box-shadow:0 12px 40px rgba(0,0,0,0.2); }
 .pl-card:hover::after { opacity:1; }
