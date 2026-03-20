@@ -17,8 +17,8 @@
  *  AuthProvider:
  *    OLD: stored user in localStorage, no real password, no backend
  *    NEW: calls /api/auth/login and /api/auth/register on backend
- *         session stored as HTTP-only JWT cookie (gvx_token)
- *         on app load, calls /api/auth/me to restore session from cookie
+ *         session stored in sessionStorage (clears on tab close)
+ *         on app load, checks sessionStorage to restore session
  *         guest mode still works — guest user has isGuest: true flag
  *
  *  LikedProvider:
@@ -92,13 +92,13 @@ export const useTheme = () => useContext(ThemeCtx);
 
 
 /* ══════════════════════════════════════════════
-   2.  AUTH CONTEXT  (updated — real MongoDB backend)
+   2.  AUTH CONTEXT  (updated — sessionStorage session)
    ──────────────────────────────────────────────
-   Session stored as HTTP-only JWT cookie (gvx_token).
-   On app load: calls /api/auth/me to restore session.
+   Session stored in sessionStorage (clears on tab close).
+   On app load: checks sessionStorage to restore session.
    login() handles both register and login modes.
    loginAsGuest() creates a local guest object (no backend call).
-   logout() clears the cookie via /api/auth/logout.
+   logout() clears sessionStorage + cookie via /api/auth/logout.
    ══════════════════════════════════════════════ */
 const AuthCtx = createContext(null);
 
@@ -114,18 +114,29 @@ export function AuthProvider({ children }) {
   /* ════════════════════════════════════════════
      SESSION RESTORE — runs once on app load
      ─────────────────────────────────────────────
-     Calls /api/auth/me with the existing gvx_token cookie.
-     If valid → restores user session silently.
-     If invalid/missing → user stays null (auth page shows).
+     Checks sessionStorage for saved user.
+     sessionStorage clears automatically when tab is closed.
+     If found → restores user session silently.
+     If not found → user stays null (auth page shows).
      Either way → sets loading false so app renders.
   ════════════════════════════════════════════ */
   useEffect(() => {
-    import('../services/api.js').then(({ apiGetMe }) => {
-      apiGetMe()
-        .then(res => { if (res.success) setUser(res.user); })
-        .catch(() => { /* cookie absent or expired — ignore */ })
-        .finally(() => setLoading(false));
-    });
+    /* Check sessionStorage — empty if tab was closed */
+    const saved = sessionStorage.getItem('gvx-user');
+    if (!saved) {
+      setLoading(false);
+      return;
+    }
+
+    /* Session exists — restore user from sessionStorage */
+    try {
+      setUser(JSON.parse(saved));
+    } catch {
+      /* Invalid data — ignore and show auth page */
+      sessionStorage.removeItem('gvx-user');
+    }
+
+    setLoading(false);
   }, []);
 
 
@@ -136,7 +147,7 @@ export function AuthProvider({ children }) {
      mode = 'login'    → calls apiLogin(email, password)
      mode = 'register' → calls apiRegister(formData)
 
-     On success: sets user state.
+     On success: saves user to sessionStorage + sets state.
      On failure: throws error so Auth.jsx shows it inline.
   ════════════════════════════════════════════ */
   const login = async (email, password, mode = 'login', formData = null) => {
@@ -148,7 +159,8 @@ export function AuthProvider({ children }) {
 
     if (!res.success) throw new Error(res.message);
 
-    /* Store user — cookie is set by backend automatically */
+    /* Store user in sessionStorage — clears on tab close */
+    sessionStorage.setItem('gvx-user', JSON.stringify(res.user));
     setUser(res.user);
   };
 
@@ -173,11 +185,12 @@ export function AuthProvider({ children }) {
      logout()
      ─────────────────────────────────────────────
      Calls /api/auth/logout to clear JWT cookie on server.
-     Then clears user state locally.
+     Clears sessionStorage and user state locally.
   ════════════════════════════════════════════ */
   const logout = async () => {
     const { apiLogout } = await import('../services/api.js');
     await apiLogout();
+    sessionStorage.removeItem('gvx-user'); /* clear session on logout */
     setUser(null);
   };
 
@@ -527,28 +540,28 @@ export function PlayerProvider({ children }) {
     return () => clearInterval(pollRef.current);
   }, []);
 
-useEffect(() => {
-  if (!current) return;
-  setTime(0);
-  setDur(0);
+  useEffect(() => {
+    if (!current) return;
+    setTime(0);
+    setDur(0);
 
-  const tryLoad = () => {
-    if (readyRef.current && ytPlayer.current) {
-      try {
-        ytPlayer.current.loadVideoById(current.videoId);
-        ytPlayer.current.setVolume(volume);
-      } catch (err) {
-        /* Player not attached yet — retry after 300ms */
-        setTimeout(tryLoad, 300);
+    const tryLoad = () => {
+      if (readyRef.current && ytPlayer.current) {
+        try {
+          ytPlayer.current.loadVideoById(current.videoId);
+          ytPlayer.current.setVolume(volume);
+        } catch (err) {
+          /* Player not attached yet — retry after 300ms */
+          setTimeout(tryLoad, 300);
+        }
+      } else {
+        /* Store as pending — onReady will pick it up */
+        pendingId.current = current.videoId;
       }
-    } else {
-      /* Store as pending — onReady will pick it up */
-      pendingId.current = current.videoId;
-    }
-  };
+    };
 
-  tryLoad();
-}, [current?.videoId]);
+    tryLoad();
+  }, [current?.videoId]);
 
   const setVolume = useCallback((v) => {
     setVolRaw(v);
