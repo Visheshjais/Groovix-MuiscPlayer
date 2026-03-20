@@ -179,9 +179,7 @@ cd frontend && npm run dev
 | One search | ~100 units |
 | Video details | ~1 unit |
 
-Free quota: **10,000 units/day**. Resets at midnight Pacific Time.
-
----
+> 💡 **Multi-Key Rotation Strategy** — Groovix uses **33 YouTube API keys** that rotate automatically when one hits its daily limit. This gives a total of **330,000 units/day** — ensuring 24/7 uninterrupted music streaming. Each key resets at midnight Pacific Time.
 
 ## 🎵 How the Player Works
 ```
