@@ -76,7 +76,10 @@ async function connectDB() {
   }
 }
 
-connectDB(); /* Connect immediately — subsequent calls will be no-ops due to caching */
+app.use(async (req, res, next) => {
+  await connectDB();
+  next();
+});
 
 /* ════════════════════════════════════════════
    COMPRESSION (unchanged)
