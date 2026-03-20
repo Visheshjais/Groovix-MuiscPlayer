@@ -527,17 +527,28 @@ export function PlayerProvider({ children }) {
     return () => clearInterval(pollRef.current);
   }, []);
 
-  useEffect(() => {
-    if (!current) return;
-    setTime(0);
-    setDur(0);
+useEffect(() => {
+  if (!current) return;
+  setTime(0);
+  setDur(0);
+
+  const tryLoad = () => {
     if (readyRef.current && ytPlayer.current) {
-      ytPlayer.current.loadVideoById(current.videoId);
-      ytPlayer.current.setVolume(volume);
+      try {
+        ytPlayer.current.loadVideoById(current.videoId);
+        ytPlayer.current.setVolume(volume);
+      } catch (err) {
+        /* Player not attached yet — retry after 300ms */
+        setTimeout(tryLoad, 300);
+      }
     } else {
+      /* Store as pending — onReady will pick it up */
       pendingId.current = current.videoId;
     }
-  }, [current?.videoId]);
+  };
+
+  tryLoad();
+}, [current?.videoId]);
 
   const setVolume = useCallback((v) => {
     setVolRaw(v);
