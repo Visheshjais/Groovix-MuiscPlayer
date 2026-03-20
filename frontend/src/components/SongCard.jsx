@@ -92,6 +92,7 @@ export default function SongCard({ song, queue = [] }) {
     if (dropOpen) { setDropOpen(false); return; }
 
     const rect = fabRef.current.getBoundingClientRect();
+    console.log('FAB rect:', rect); // ← temporary debug log
     setDropPos({
       top:  rect.top + window.scrollY,
       left: rect.left + window.scrollX,

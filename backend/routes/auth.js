@@ -41,7 +41,7 @@ const sendToken = (res, user) => {
     httpOnly: true,
     sameSite: 'none',
     secure:   true,
-    maxAge:   7 * 24 * 60 * 60 * 1000,
+    // no maxAge = session cookie → deleted when browser tab closes
   });
   return token;
 };
