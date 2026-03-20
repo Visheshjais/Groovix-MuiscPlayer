@@ -21,7 +21,7 @@ export default function PlaylistDetail() {
   const nav            = useNavigate();
 
   /* Find the playlist by id from the URL */
-  const pl = playlists.find(p => p.id === id);
+  const pl = playlists.find(p => (p._id || p.id) === id);
 
   /* Not found */
   if (!pl) return (

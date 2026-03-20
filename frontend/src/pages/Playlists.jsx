@@ -29,7 +29,7 @@ export default function Playlists() {
     show(`✦ "${pl.name}" created`);
     setName('');
     setModal(false);
-    nav(`/playlist/${pl.id}`);
+    nav(`/playlist/${pl._id || pl.id}`);
   };
 
   return (
@@ -57,13 +57,13 @@ export default function Playlists() {
 
           {/* Existing playlists */}
           {playlists.map(pl => (
-            <div key={pl.id} className="pl-card" onClick={() => nav(`/playlist/${pl.id}`)}>
+            <div key={pl._id || pl.id} className="pl-card" onClick={() => nav(`/playlist/${pl._id || pl.id}`)}>
               <div className="pl-icon">{pl.emoji}</div>
               <div className="pl-name">{pl.name}</div>
               <div className="pl-count">{pl.songs.length} songs</div>
               <button
                 className="pl-del"
-                onClick={e => { e.stopPropagation(); remove(pl.id); show('Playlist deleted'); }}
+                onClick={e => { e.stopPropagation(); remove(pl._id || pl.id); show('Playlist deleted'); }}
               >
                 Delete
               </button>
