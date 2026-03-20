@@ -177,7 +177,7 @@ export default function SongCard({ song, queue = [] }) {
       onClick={e => e.stopPropagation()}
       style={{
         position:     'fixed',
-        top:          `${dropPos.top - 160}px`,
+        top:          `${dropPos.top - 140}px`,
         left:         `${dropPos.left - 210}px`,
         zIndex:       9999,
         minWidth:     '210px',
