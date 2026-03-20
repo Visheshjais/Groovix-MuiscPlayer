@@ -9,7 +9,7 @@
  *
  *  On hover:
  *    - Play button overlay appears
- *    - Like FAB (heart) appears top-right of thumbnail
+ *    - Like FAB (heart) appears top-left of thumbnail
  *    - Add to Playlist FAB (plus) appears bottom-right of thumbnail
  *
  *  If this song is currently playing:
@@ -27,6 +27,7 @@
  *    Dropdown is rendered via ReactDOM.createPortal into document.body
  *    so it is never clipped by carousel overflow.
  *    Position is calculated from the + FAB button's bounding rect.
+ *    Uses fixed positioning so it scrolls with the page correctly.
  * ============================================================
  */
 
@@ -47,12 +48,12 @@ export default function SongCard({ song, queue = [] }) {
   const [creating, setCreating] = useState(false);
   const [newName,  setNewName]  = useState('');
 
-  /* ── Position of the dropdown (calculated from FAB position) ── */
-  const [dropPos,  setDropPos]  = useState({ top: 0, left: 0 });
+  /* ── Position of the dropdown (calculated from FAB bounding rect) ── */
+  const [dropPos, setDropPos] = useState({ top: 0, left: 0 });
 
   /* Refs */
-  const dropRef = useRef(null);  // dropdown panel ref (for outside click)
-  const fabRef  = useRef(null);  // + FAB button ref (for position calculation)
+  const dropRef = useRef(null); /* dropdown panel — for outside-click detection */
+  const fabRef  = useRef(null); /* + FAB button  — for position calculation     */
 
   /* Is this card the currently loaded track? */
   const active = current?.videoId === song.videoId;
@@ -60,6 +61,10 @@ export default function SongCard({ song, queue = [] }) {
 
   /* ════════════════════════════════════════════
      CLICK OUTSIDE — close dropdown
+     ─────────────────────────────────────────────
+     Attaches a mousedown listener to document when
+     dropdown is open. Closes if click is outside
+     both the dropdown panel and the + FAB button.
   ════════════════════════════════════════════ */
   useEffect(() => {
     if (!dropOpen) return;
@@ -83,19 +88,19 @@ export default function SongCard({ song, queue = [] }) {
   /* ════════════════════════════════════════════
      OPEN DROPDOWN — calculate position from FAB
      ─────────────────────────────────────────────
-     Gets the bounding rect of the + FAB button and
-     positions the dropdown above it using fixed coords.
-     This works even inside overflow:hidden containers.
+     Gets the bounding rect of the + FAB button.
+     Positions dropdown ABOVE and to the LEFT of FAB
+     using viewport-relative fixed coordinates.
+     Works even inside overflow:hidden carousel containers.
   ════════════════════════════════════════════ */
   const openDrop = (e) => {
     e.stopPropagation();
     if (dropOpen) { setDropOpen(false); return; }
 
     const rect = fabRef.current.getBoundingClientRect();
-    console.log('FAB rect:', rect); // ← temporary debug log
     setDropPos({
-      top:  rect.top + window.scrollY,
-      left: rect.left + window.scrollX,
+      top:  rect.top,   /* viewport-relative — used with fixed positioning */
+      left: rect.right, /* align right edge of dropdown to right edge of FAB */
     });
     setDropOpen(true);
   };
@@ -103,6 +108,9 @@ export default function SongCard({ song, queue = [] }) {
 
   /* ════════════════════════════════════════════
      handleAddToPlaylist(e, pid)
+     ─────────────────────────────────────────────
+     Adds this song to the chosen playlist.
+     pid = playlist._id (MongoDB) or playlist.id (guest)
   ════════════════════════════════════════════ */
   const handleAddToPlaylist = async (e, pid) => {
     e.stopPropagation();
@@ -114,6 +122,8 @@ export default function SongCard({ song, queue = [] }) {
 
   /* ════════════════════════════════════════════
      handleCreate(e)
+     ─────────────────────────────────────────────
+     Creates a new playlist and adds this song to it.
   ════════════════════════════════════════════ */
   const handleCreate = async (e) => {
     e.stopPropagation();
@@ -134,47 +144,96 @@ export default function SongCard({ song, queue = [] }) {
   /* ════════════════════════════════════════════
      PORTAL DROPDOWN
      ─────────────────────────────────────────────
-     Rendered into document.body so it escapes
-     any overflow:hidden parent containers.
-     Uses fixed positioning based on FAB coords.
+     Rendered into document.body via createPortal.
+     Escapes all overflow:hidden parent containers.
+     Positioned using fixed coords from FAB rect.
+     Uses inline styles with hardcoded dark theme
+     colors so CSS variables work without a theme wrapper.
   ════════════════════════════════════════════ */
   const dropdownPortal = dropOpen && createPortal(
     <div
       ref={dropRef}
-      className="pl-dropdown"
-      style={{
-        position: 'fixed',
-        top:      `${dropPos.top - 220}px`,
-        left:     `${dropPos.left - 170}px`,
-        zIndex:   9999,
-        minWidth: '200px',
-        maxWidth: '240px',
-      }}
       onClick={e => e.stopPropagation()}
+      style={{
+        position:     'fixed',
+        top:          `${dropPos.top - 230}px`,
+        left:         `${dropPos.left - 210}px`,
+        zIndex:       9999,
+        minWidth:     '210px',
+        maxWidth:     '250px',
+        background:   '#0c0f1a',
+        border:       '1px solid #1e2a42',
+        borderRadius: '10px',
+        boxShadow:    '0 8px 32px rgba(0,0,0,0.6)',
+        overflow:     'hidden',
+        color:        '#e8eaf6',
+        fontFamily:   'Outfit, sans-serif',
+        fontSize:     '13px',
+      }}
     >
-      <div className="pl-drop-title">Add to playlist</div>
+      {/* Header */}
+      <div style={{
+        padding:       '10px 14px 8px',
+        fontSize:      '11px',
+        fontWeight:    600,
+        letterSpacing: '0.08em',
+        textTransform: 'uppercase',
+        color:         '#3d4f6e',
+        borderBottom:  '1px solid #1e2a42',
+      }}>
+        Add to playlist
+      </div>
 
+      {/* Empty state */}
       {playlists.length === 0 && !creating && (
-        <div className="pl-drop-empty">No playlists yet</div>
+        <div style={{ padding: '12px 14px', color: '#3d4f6e' }}>
+          No playlists yet
+        </div>
       )}
 
+      {/* Existing playlists */}
       {playlists.map(p => (
         <button
           key={p._id || p.id}
-          className="pl-drop-item"
           onClick={e => handleAddToPlaylist(e, p._id || p.id)}
+          style={{
+            display:     'flex',
+            alignItems:  'center',
+            gap:         '8px',
+            width:       '100%',
+            padding:     '9px 14px',
+            border:      'none',
+            background:  'transparent',
+            color:       '#e8eaf6',
+            fontSize:    '13px',
+            fontFamily:  'Outfit, sans-serif',
+            textAlign:   'left',
+            cursor:      'pointer',
+          }}
+          onMouseEnter={e => e.currentTarget.style.background = '#1a2035'}
+          onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
         >
           <span>{p.emoji || '🎵'}</span>
-          <span className="pl-drop-name">{p.name}</span>
-          <span className="pl-drop-count">{p.songs?.length || 0}</span>
+          <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {p.name}
+          </span>
+          <span style={{ fontSize: '11px', color: '#3d4f6e' }}>
+            {p.songs?.length || 0}
+          </span>
         </button>
       ))}
 
+      {/* New playlist — inline input or button */}
       {creating ? (
-        <div className="pl-drop-new">
+        <div style={{
+          display:      'flex',
+          alignItems:   'center',
+          gap:          '6px',
+          padding:      '8px 10px',
+          borderTop:    '1px solid #1e2a42',
+        }}>
           <input
             autoFocus
-            className="pl-drop-input"
             placeholder="Playlist name..."
             value={newName}
             onChange={e => setNewName(e.target.value)}
@@ -183,13 +242,52 @@ export default function SongCard({ song, queue = [] }) {
               if (e.key === 'Escape') { setCreating(false); setNewName(''); }
             }}
             onClick={e => e.stopPropagation()}
+            style={{
+              flex:         1,
+              background:   '#111520',
+              border:       '1px solid #1e2a42',
+              borderRadius: '6px',
+              padding:      '5px 8px',
+              color:        '#e8eaf6',
+              fontSize:     '13px',
+              fontFamily:   'Outfit, sans-serif',
+              outline:      'none',
+            }}
           />
-          <button className="pl-drop-save" onClick={handleCreate}>✓</button>
+          <button
+            onClick={handleCreate}
+            style={{
+              background:   '#6c63ff',
+              color:        '#fff',
+              border:       'none',
+              borderRadius: '6px',
+              padding:      '5px 10px',
+              fontSize:     '14px',
+              cursor:       'pointer',
+            }}
+          >
+            ✓
+          </button>
         </div>
       ) : (
         <button
-          className="pl-drop-create"
           onClick={e => { e.stopPropagation(); setCreating(true); }}
+          style={{
+            display:    'flex',
+            alignItems: 'center',
+            gap:        '6px',
+            width:      '100%',
+            padding:    '9px 14px',
+            border:     'none',
+            borderTop:  '1px solid #1e2a42',
+            background: 'transparent',
+            color:      '#6c63ff',
+            fontSize:   '13px',
+            fontFamily: 'Outfit, sans-serif',
+            cursor:     'pointer',
+          }}
+          onMouseEnter={e => e.currentTarget.style.background = '#1a2035'}
+          onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
         >
           ＋ New playlist
         </button>
@@ -247,7 +345,7 @@ export default function SongCard({ song, queue = [] }) {
 
         {/* ════════════════════════════════════════════
             ADD TO PLAYLIST FAB — bottom-right of thumbnail
-            + FAB button ref'd for position calculation.
+            fabRef used for dropdown position calculation.
             Dropdown rendered via portal into document.body.
         ════════════════════════════════════════════ */}
         <div

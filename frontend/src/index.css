@@ -666,7 +666,6 @@ html, body, #root {
 
 /* THE DROPDOWN PANEL (shared A + B) */
 .pl-dropdown {
-  position: absolute;
   bottom: 110%;
   left: 0;
   min-width: 200px;
