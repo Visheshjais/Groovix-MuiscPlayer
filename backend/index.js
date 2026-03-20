@@ -54,14 +54,25 @@ const PORT = process.env.PORT || 3001;
    if MONGO_URI is missing — music features still work,
    only auth/liked/playlists will be unavailable.
 ════════════════════════════════════════════ */
-if (process.env.MONGO_URI) {
-  mongoose.connect(process.env.MONGO_URI)
-    .then(() => console.log('✅ MongoDB connected successfully'))
-    .catch(err => console.error('❌ MongoDB connection error:', err.message));
-} else {
-  console.warn('⚠️  MONGO_URI not set — auth/liked/playlists features disabled');
+/* ── MongoDB connection with caching for Vercel serverless ── */
+let isConnected = false;
+
+async function connectDB() {
+  if (isConnected) return;
+  if (!process.env.MONGO_URI) {
+    console.warn('⚠️  MONGO_URI not set');
+    return;
+  }
+  try {
+    await mongoose.connect(process.env.MONGO_URI);
+    isConnected = true;
+    console.log('✅ MongoDB connected');
+  } catch (err) {
+    console.error('❌ MongoDB error:', err.message);
+  }
 }
 
+connectDB(); /* Connect immediately — subsequent calls will be no-ops due to caching */
 
 /* ════════════════════════════════════════════
    COMPRESSION (unchanged)
