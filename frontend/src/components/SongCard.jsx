@@ -144,11 +144,12 @@ export default function SongCard({ song, queue = [] }) {
       className="pl-dropdown"
       style={{
         position: 'fixed',
-        top:      dropPos.top - 8,
-        left:     dropPos.left - 160,
+        top:      `${dropPos.top - 220}px`,
+        left:     `${dropPos.left - 170}px`,
         zIndex:   9999,
         minWidth: '200px',
-}}
+        maxWidth: '240px',
+      }}
       onClick={e => e.stopPropagation()}
     >
       <div className="pl-drop-title">Add to playlist</div>
