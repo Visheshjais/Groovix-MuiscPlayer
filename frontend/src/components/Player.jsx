@@ -14,10 +14,20 @@
  *  2. BOTTOM PLAYER BAR (always visible)
  *     Transport controls + progress bar + volume.
  *
- *  ── ADD TO PLAYLIST FEATURE ────────────────────────────────
- *  PlaylistDropdown is a reusable component used in two places:
- *    - Video panel action buttons (next to Like/Prev/Play/Next)
- *    - Bottom player bar now-playing section (next to ❤️)
+ *  ── WHY PLAYER INIT LIVES HERE (not in context) ────────────
+ *
+ *  The YouTube IFrame player must be created AFTER the
+ *  #yt-player-slot div exists in the DOM. PlayerProvider
+ *  in context/index.jsx mounts BEFORE this component renders,
+ *  so any init code there runs too early — the div doesn't
+ *  exist yet and the player silently fails.
+ *
+ *  By running initPlayer() inside a useEffect() HERE, React
+ *  guarantees the DOM (including #yt-player-slot) is fully
+ *  painted before the effect runs. No polling needed.
+ *
+ *  context/index.jsx still owns all state and exposes
+ *  initYTPlayer() so this component can trigger the init.
  * ============================================================
  */
 
@@ -39,8 +49,7 @@ function fmt(s) {
    ─────────────────────────────────────────────
    Props:
      song  — the song object to add
-     align — 'left' | 'right' — which side the dropdown anchors to
-   Used in video panel and bottom player bar.
+     align — 'left' | 'right' — which side dropdown anchors
 ════════════════════════════════════════════ */
 function PlaylistDropdown({ song, align = 'left' }) {
 
@@ -65,7 +74,7 @@ function PlaylistDropdown({ song, align = 'left' }) {
     return () => document.removeEventListener('mousedown', handler);
   }, [open]);
 
-  /* Add current song to existing playlist */
+  /* Add song to existing playlist */
   const handleAdd = async (pid) => {
     await addSong(pid, song);
     show('Added to playlist!');
@@ -89,7 +98,6 @@ function PlaylistDropdown({ song, align = 'left' }) {
   return (
     <div className="pl-drop-wrap" ref={ref} style={{ position: 'relative' }}>
 
-      {/* + button styled same as np-btn (like button) */}
       <button
         className="np-btn"
         title="Add to playlist"
@@ -99,7 +107,6 @@ function PlaylistDropdown({ song, align = 'left' }) {
         ＋
       </button>
 
-      {/* Dropdown panel — opens upward */}
       {open && (
         <div
           className="pl-dropdown"
@@ -170,10 +177,25 @@ export default function Player() {
     repeat,    setRepeat,
     videoOpen, setVideoOpen,
     time,      dur,  seekTo,
+    initYTPlayer,   /* ← called here after slot div is painted */
   } = usePlayer();
 
   const { toggle, isLiked } = useLiked();
   const { show }            = useToast();
+
+  /* ════════════════════════════════════════════
+     INIT YOUTUBE PLAYER — runs after first paint
+     ─────────────────────────────────────────────
+     This is the KEY FIX. useEffect runs AFTER React
+     has painted the DOM, so #yt-player-slot is
+     guaranteed to exist when initYTPlayer() is called.
+
+     Previously this ran in context/index.jsx (too early —
+     before Player.jsx rendered the slot div).
+  ════════════════════════════════════════════ */
+  useEffect(() => {
+    initYTPlayer();
+  }, []); /* eslint-disable-line react-hooks/exhaustive-deps — run once after mount */
 
   const handleLike = () => {
     if (!current) return;
@@ -231,27 +253,19 @@ export default function Player() {
                 <div className="vid-title">{current.title}</div>
                 <div className="vid-channel">{current.channel}</div>
 
-                {/* Video panel action buttons */}
                 <div className="vid-actions">
-
-                  {/* Like */}
                   <button
                     className={`vid-btn ${isLiked(current.videoId) ? 'liked' : ''}`}
                     onClick={handleLike}
                   >
                     {isLiked(current.videoId) ? '❤️ Liked' : '🤍 Like'}
                   </button>
-
-                  {/* ── Add to Playlist (video panel) ── */}
                   <PlaylistDropdown song={current} align="left" />
-
                   <button className="vid-btn" onClick={prev}>⏮ Prev</button>
                   <button className="vid-btn" onClick={togglePlay}>{playing ? '⏸ Pause' : '▶ Play'}</button>
                   <button className="vid-btn" onClick={next}>Next ⏭</button>
-
                 </div>
 
-                {/* Animated EQ bars while playing */}
                 {playing && (
                   <div className="vid-eq">
                     {[1,2,3,4,5,6,7,8].map(i => (
@@ -269,7 +283,6 @@ export default function Player() {
 
       {/* ══════════════════════════════════════════════════════
           BOTTOM PLAYER BAR — always visible
-          Three columns: [NOW PLAYING] [CONTROLS] [VOLUME]
       ══════════════════════════════════════════════════════ */}
       <div className="player-bar player-col">
 
@@ -277,7 +290,6 @@ export default function Player() {
         <div className="np">
           {current ? (
             <>
-              {/* Thumbnail — click to toggle video mode */}
               <img
                 className={`np-thumb ${videoOpen ? 'video-on' : ''}`}
                 src={current.thumbnail}
@@ -285,16 +297,11 @@ export default function Player() {
                 onClick={() => setVideoOpen(v => !v)}
                 title={videoOpen ? 'Hide Video' : 'Video Mode'}
               />
-
               <div className="np-info">
                 <div className="np-title">{current.title}</div>
                 <div className="np-ch">{current.channel}</div>
               </div>
-
-              {/* Action buttons: Like + Add to Playlist + Video Mode */}
               <div className="np-acts">
-
-                {/* Like */}
                 <button
                   className={`np-btn ${isLiked(current.videoId) ? 'liked' : ''}`}
                   onClick={handleLike}
@@ -302,11 +309,7 @@ export default function Player() {
                 >
                   {isLiked(current.videoId) ? '❤️' : '🤍'}
                 </button>
-
-                {/* ── Add to Playlist (player bar) ── */}
                 <PlaylistDropdown song={current} align="left" />
-
-                {/* Video Mode toggle */}
                 <button
                   className={`np-btn-label ${videoOpen ? 'vid-active' : ''}`}
                   onClick={() => setVideoOpen(v => !v)}
@@ -314,7 +317,6 @@ export default function Player() {
                 >
                   📺 {videoOpen ? 'Hide Video' : 'Video Mode'}
                 </button>
-
               </div>
             </>
           ) : (
@@ -327,7 +329,6 @@ export default function Player() {
             </>
           )}
         </div>
-
 
         {/* ── CENTER: Transport + Progress ── */}
         <div className="ctrl-center">
@@ -346,7 +347,6 @@ export default function Player() {
             <span className="prog-time r">{fmt(dur)}</span>
           </div>
         </div>
-
 
         {/* ── RIGHT: Volume ── */}
         <div className="ctrl-right">

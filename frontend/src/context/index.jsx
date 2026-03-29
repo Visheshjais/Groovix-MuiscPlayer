@@ -9,44 +9,36 @@
  *    2. AuthProvider     – real MongoDB login / logout / session restore
  *    3. LikedProvider    – liked songs (MongoDB for logged-in, localStorage for guest)
  *    4. PlaylistProvider – playlists (MongoDB for logged-in, localStorage for guest)
- *    5. PlayerProvider   – YouTube IFrame API engine (TWO BUGS FIXED)
+ *    5. PlayerProvider   – YouTube IFrame API engine (FIXED)
  *    6. ToastProvider    – toast notifications
  *
- *  ── PLAYER BUG FIXES ────────────────────────────────────────
+ *  ── PLAYER BUG FIX ──────────────────────────────────────────
  *
- *  BUG 1 — #yt-player-slot not in DOM when initPlayer() runs
- *    PROBLEM:
- *      PlayerProvider mounts before Player.jsx renders.
- *      So new YT.Player('yt-player-slot') targeted a div
- *      that didn't exist yet → player silently failed →
- *      iframe was never created → no audio ever played.
- *      Proof: document.querySelector('#yt-player-slot iframe')
- *      returned null on the live site.
- *    FIX:
- *      waitForSlot() polls every 100ms until the div appears
- *      in the DOM, then safely creates the player.
- *      Also passes the DOM element directly to YT.Player()
- *      instead of the string ID, to avoid any lookup race.
+ *  ROOT CAUSE — timing:
+ *    PlayerProvider mounts before Player.jsx renders.
+ *    Any code that calls new YT.Player('yt-player-slot') inside
+ *    PlayerProvider's useEffect runs before #yt-player-slot
+ *    exists in the DOM → player silently fails → no audio.
  *
- *  BUG 2 — Stale closure in onStateChange
- *    PROBLEM:
- *      onStateChange was created once inside useEffect([]).
- *      It captured queue, shuffle, repeat from the initial
- *      render — all empty/false — and never saw updates.
- *      So when a song ended, queue.length === 0 and the
- *      next-song logic always failed silently.
- *    FIX:
- *      Three refs (queueRef, shuffleRef, repeatRef) mirror
- *      live state. Separate useEffects keep them in sync.
- *      onStateChange reads from refs — always current.
+ *  FIX — initYTPlayer() is now exposed via context:
+ *    PlayerProvider defines initYTPlayer() but does NOT call it.
+ *    Player.jsx receives initYTPlayer from context and calls it
+ *    inside its own useEffect — which runs AFTER React has
+ *    painted the DOM, guaranteeing #yt-player-slot exists.
+ *
+ *  ── STALE CLOSURE FIX ───────────────────────────────────────
+ *
+ *  onStateChange is created once and freezes the values of
+ *  queue/shuffle/repeat at creation time (always empty/false).
+ *  Fix: queueRef/shuffleRef/repeatRef mirror live state and
+ *  are read inside onStateChange instead of stale closure vars.
  *
  *  ── HOW AUDIO + VIDEO SYNC WORKS ───────────────────────────
  *
- *  YouTube IFrame API is loaded via <script> in index.html.
  *  ONE YT.Player instance lives in #yt-player-slot (Player.jsx).
  *  The video panel is hidden with opacity:0 + position:absolute
- *  so the iframe stays "visible" to YouTube — audio keeps
- *  playing even when the video panel is closed.
+ *  so the iframe stays "visible" to YouTube — audio continues
+ *  even when the video panel is closed.
  * ============================================================
  */
 
@@ -104,50 +96,32 @@ export function AuthProvider({ children }) {
   /* ── SESSION RESTORE: runs once on app load ── */
   useEffect(() => {
     const saved = sessionStorage.getItem('gvx-user');
-    if (!saved) {
-      setLoading(false);
-      return;
-    }
-    try {
-      setUser(JSON.parse(saved));
-    } catch {
-      sessionStorage.removeItem('gvx-user');
-    }
+    if (!saved) { setLoading(false); return; }
+    try { setUser(JSON.parse(saved)); }
+    catch { sessionStorage.removeItem('gvx-user'); }
     setLoading(false);
   }, []);
 
   /* ── login(email, password, mode, formData) ──
-     mode = 'login'    → calls apiLogin
-     mode = 'register' → calls apiRegister
-     On success: saves user to sessionStorage.
-     On failure: throws so Auth.jsx can show the error. */
+     mode='login'    → apiLogin(email, password)
+     mode='register' → apiRegister(formData)
+     Throws on failure so Auth.jsx can show the error. */
   const login = async (email, password, mode = 'login', formData = null) => {
     const { apiLogin, apiRegister } = await import('../services/api.js');
-
     const res = mode === 'register'
       ? await apiRegister(formData)
       : await apiLogin(email, password);
-
     if (!res.success) throw new Error(res.message);
-
     sessionStorage.setItem('gvx-user', JSON.stringify(res.user));
     setUser(res.user);
   };
 
-  /* ── loginAsGuest() ──
-     No backend call. isGuest: true tells providers
-     to use localStorage instead of MongoDB. */
+  /* ── loginAsGuest() — no backend call ── */
   const loginAsGuest = () => {
-    setUser({
-      name:    'Guest',
-      email:   'guest@groovix.app',
-      avatar:  '',
-      isGuest: true,
-    });
+    setUser({ name: 'Guest', email: 'guest@groovix.app', avatar: '', isGuest: true });
   };
 
-  /* ── logout() ──
-     Clears JWT cookie on server + sessionStorage locally. */
+  /* ── logout() — clear cookie + session ── */
   const logout = async () => {
     const { apiLogout } = await import('../services/api.js');
     await apiLogout();
@@ -155,7 +129,6 @@ export function AuthProvider({ children }) {
     setUser(null);
   };
 
-  /* Render nothing while checking session to avoid flash */
   if (loading) return null;
 
   return (
@@ -180,49 +153,37 @@ export function LikedProvider({ children }) {
   const [liked, setLiked] = useState([]);
   const { user }          = useAuth();
 
-  /* Load liked songs whenever user changes */
   useEffect(() => {
     if (!user) { setLiked([]); return; }
-
     if (user.isGuest) {
       try { setLiked(JSON.parse(localStorage.getItem('gvx-liked')) || []); }
       catch { setLiked([]); }
       return;
     }
-
     import('../services/api.js').then(({ apiGetLiked }) => {
       apiGetLiked()
         .then(res => { if (res.success) setLiked(res.songs); })
-        .catch(err => console.error('[LikedProvider] fetch error:', err));
+        .catch(err => console.error('[LikedProvider]', err));
     });
   }, [user]);
 
-  /* toggle(song) — add or remove a liked song */
   const toggle = useCallback(async (song) => {
     if (!user) return;
-
     if (user.isGuest) {
       setLiked(prev => {
         const exists = prev.find(s => s.videoId === song.videoId);
-        const next   = exists
-          ? prev.filter(s => s.videoId !== song.videoId)
-          : [song, ...prev];
+        const next   = exists ? prev.filter(s => s.videoId !== song.videoId) : [song, ...prev];
         localStorage.setItem('gvx-liked', JSON.stringify(next));
         return next;
       });
       return;
     }
-
     const { apiToggleLiked } = await import('../services/api.js');
     const res = await apiToggleLiked(song);
     if (res.success) setLiked(res.songs);
   }, [user]);
 
-  /* isLiked — fast local check, no API call needed */
-  const isLiked = useCallback(
-    (id) => liked.some(s => s.videoId === id),
-    [liked]
-  );
+  const isLiked = useCallback((id) => liked.some(s => s.videoId === id), [liked]);
 
   return (
     <LikedCtx.Provider value={{ liked, toggle, isLiked }}>
@@ -238,11 +199,6 @@ export const useLiked = () => useContext(LikedCtx);
    ──────────────────────────────────────────────
    Logged-in: synced with MongoDB via /api/playlists
    Guest:     localStorage fallback
-
-   ID compatibility:
-     Logged-in → playlist._id = MongoDB ObjectId string
-     Guest     → playlist.id  = Date.now() string (legacy)
-   Code checks p._id || p.id everywhere for compatibility.
    ══════════════════════════════════════════════ */
 const PlaylistCtx = createContext(null);
 
@@ -251,101 +207,72 @@ export function PlaylistProvider({ children }) {
   const [playlists, setPlaylists] = useState([]);
   const { user }                  = useAuth();
 
-  /* Load playlists when user changes */
   useEffect(() => {
     if (!user) { setPlaylists([]); return; }
-
     if (user.isGuest) {
       try { setPlaylists(JSON.parse(localStorage.getItem('gvx-pl')) || []); }
       catch { setPlaylists([]); }
       return;
     }
-
     import('../services/api.js').then(({ apiGetPlaylists }) => {
       apiGetPlaylists()
         .then(res => { if (res.success) setPlaylists(res.playlists); })
-        .catch(err => console.error('[PlaylistProvider] fetch error:', err));
+        .catch(err => console.error('[PlaylistProvider]', err));
     });
   }, [user]);
 
-  /* create(name) — new empty playlist */
   const create = async (name) => {
     const emojis = ['🎵', '🎶', '🎸', '🎹', '🥁', '🎺', '🎻', '🎤'];
     const emoji  = emojis[Math.floor(Math.random() * emojis.length)];
-
     if (!user || user.isGuest) {
       const p = { id: Date.now().toString(), name, songs: [], emoji };
-      setPlaylists(prev => {
-        const next = [p, ...prev];
-        localStorage.setItem('gvx-pl', JSON.stringify(next));
-        return next;
-      });
+      setPlaylists(prev => { const next = [p, ...prev]; localStorage.setItem('gvx-pl', JSON.stringify(next)); return next; });
       return p;
     }
-
     const { apiCreatePlaylist } = await import('../services/api.js');
     const res = await apiCreatePlaylist(name, emoji);
-    if (res.success) {
-      setPlaylists(prev => [res.playlist, ...prev]);
-      return res.playlist;
-    }
+    if (res.success) { setPlaylists(prev => [res.playlist, ...prev]); return res.playlist; }
   };
 
-  /* addSong(pid, song) — add song to playlist */
   const addSong = async (pid, song) => {
     if (!user || user.isGuest) {
       setPlaylists(prev => {
         const next = prev.map(p =>
           (p.id === pid || p._id === pid) && !p.songs.find(s => s.videoId === song.videoId)
-            ? { ...p, songs: [...p.songs, song] }
-            : p
+            ? { ...p, songs: [...p.songs, song] } : p
         );
         localStorage.setItem('gvx-pl', JSON.stringify(next));
         return next;
       });
       return;
     }
-
     const { apiAddSongToPlaylist } = await import('../services/api.js');
     const res = await apiAddSongToPlaylist(pid, song);
-    if (res.success) {
-      setPlaylists(prev => prev.map(p => p._id === pid ? res.playlist : p));
-    }
+    if (res.success) setPlaylists(prev => prev.map(p => p._id === pid ? res.playlist : p));
   };
 
-  /* removeSong(pid, videoId) — remove song from playlist */
   const removeSong = async (pid, vid) => {
     if (!user || user.isGuest) {
       setPlaylists(prev => {
         const next = prev.map(p =>
           (p.id === pid || p._id === pid)
-            ? { ...p, songs: p.songs.filter(s => s.videoId !== vid) }
-            : p
+            ? { ...p, songs: p.songs.filter(s => s.videoId !== vid) } : p
         );
         localStorage.setItem('gvx-pl', JSON.stringify(next));
         return next;
       });
       return;
     }
-
     const { apiRemoveSongFromPlaylist } = await import('../services/api.js');
     const res = await apiRemoveSongFromPlaylist(pid, vid);
-    if (res.success) {
-      setPlaylists(prev => prev.map(p => p._id === pid ? res.playlist : p));
-    }
+    if (res.success) setPlaylists(prev => prev.map(p => p._id === pid ? res.playlist : p));
   };
 
-  /* remove(id) — delete entire playlist */
   const remove = async (id) => {
     if (!user || user.isGuest) {
-      setPlaylists(prev => {
-        const next = prev.filter(p => p.id !== id && p._id !== id);
-        localStorage.setItem('gvx-pl', JSON.stringify(next));
-        return next;
-      });
+      setPlaylists(prev => { const next = prev.filter(p => p.id !== id && p._id !== id); localStorage.setItem('gvx-pl', JSON.stringify(next)); return next; });
       return;
     }
-
     const { apiDeletePlaylist } = await import('../services/api.js');
     await apiDeletePlaylist(id);
     setPlaylists(prev => prev.filter(p => p._id !== id));
@@ -363,18 +290,14 @@ export const usePlaylists = () => useContext(PlaylistCtx);
 /* ══════════════════════════════════════════════
    5.  PLAYER CONTEXT  ← THE CORE ENGINE
    ──────────────────────────────────────────────
-   TWO BUGS FIXED (see file header for full details):
+   KEY CHANGE: initYTPlayer() is defined here but
+   NOT called here. It is exposed via context so
+   Player.jsx can call it inside its own useEffect,
+   AFTER the #yt-player-slot div is painted.
 
-   Bug 1 FIX — waitForSlot():
-     Polls every 100ms until #yt-player-slot exists in DOM.
-     Then passes the element directly to new YT.Player().
-     Without this, the player silently failed because
-     PlayerProvider mounts before Player.jsx renders the div.
-
-   Bug 2 FIX — queueRef / shuffleRef / repeatRef:
-     Mirrors live state into refs so onStateChange (which is
-     created once and has a stale closure) always reads the
-     current values when deciding what to play next.
+   This permanently fixes the race condition where
+   PlayerProvider mounted too early and the slot
+   div didn't exist when the player tried to init.
    ══════════════════════════════════════════════ */
 const PlayerCtx = createContext(null);
 
@@ -395,12 +318,11 @@ export function PlayerProvider({ children }) {
   const readyRef  = useRef(false); /* true after onReady fires */
   const pollRef   = useRef(null);  /* setInterval id for progress polling */
   const pendingId = useRef(null);  /* videoId queued before player was ready */
+  const volumeRef = useRef(80);    /* volume ref so initYTPlayer closure sees latest value */
 
-  /* ── BUG 2 FIX: live-state mirrors for onStateChange ──
-     onStateChange is created once on mount. Any state it
-     closes over (queue, shuffle, repeat) is frozen at that
-     point. These refs are kept in sync by useEffects below,
-     so onStateChange always reads the current values. */
+  /* ── Stale closure fix: refs that mirror live state ──
+     onStateChange is created once — it cannot see state
+     updates via closure. These refs are always current. */
   const queueRef   = useRef(queue);
   const shuffleRef = useRef(shuffle);
   const repeatRef  = useRef(repeat);
@@ -408,31 +330,38 @@ export function PlayerProvider({ children }) {
   useEffect(() => { queueRef.current   = queue;   }, [queue]);
   useEffect(() => { shuffleRef.current = shuffle; }, [shuffle]);
   useEffect(() => { repeatRef.current  = repeat;  }, [repeat]);
+  useEffect(() => { volumeRef.current  = volume;  }, [volume]);
 
   const current = queue[idx] || null;
 
 
   /* ════════════════════════════════════════════
-     INIT PLAYER — runs once on mount
+     initYTPlayer — exposed via context
      ─────────────────────────────────────────────
-     Creates the YT.Player instance attached to
-     the #yt-player-slot div in Player.jsx.
+     Called by Player.jsx inside its useEffect,
+     AFTER the DOM is painted and #yt-player-slot
+     is guaranteed to exist.
 
-     BUG 1 FIX: waitForSlot() polls until the div
-     exists before calling initPlayer(). This solves
-     the timing issue where PlayerProvider mounts
-     before Player.jsx renders the slot div.
+     Do NOT call this anywhere inside PlayerProvider —
+     only Player.jsx should call it.
+
+     If the YouTube API script hasn't loaded yet when
+     this is called, we set window.onYouTubeIframeAPIReady
+     so YouTube calls us back when it's ready.
   ════════════════════════════════════════════ */
-  useEffect(() => {
+  const initYTPlayer = useCallback(() => {
 
-    const initPlayer = () => {
+    const createPlayer = () => {
       /* Guard: only ever create one instance */
       if (ytPlayer.current) return;
 
-      /* BUG 1 FIX: get the element directly — at this point
-         waitForSlot() has confirmed the div is in the DOM */
+      /* At this point Player.jsx has mounted, so the slot div exists */
       const slot = document.getElementById('yt-player-slot');
-      if (!slot) return; /* safety guard */
+      if (!slot) {
+        /* Should never happen — but safety fallback */
+        console.error('[Player] #yt-player-slot not found in DOM');
+        return;
+      }
 
       ytPlayer.current = new window.YT.Player(slot, {
         height: '100%',
@@ -456,10 +385,9 @@ export function PlayerProvider({ children }) {
           /* ── onReady: iframe fully initialised ── */
           onReady: (e) => {
             readyRef.current = true;
-            e.target.setVolume(volume);
+            e.target.setVolume(volumeRef.current);
 
-            /* If a song was clicked before the player was ready,
-               play it now that the player has initialised */
+            /* If a song was clicked before player was ready, play it now */
             if (pendingId.current) {
               e.target.loadVideoById(pendingId.current);
               pendingId.current = null;
@@ -471,7 +399,7 @@ export function PlayerProvider({ children }) {
             const S = window.YT.PlayerState;
 
             if (e.data === S.PLAYING) {
-              /* Song playing — start polling for progress bar */
+              /* Started — begin 500ms progress polling */
               setPlaying(true);
               clearInterval(pollRef.current);
               pollRef.current = setInterval(() => {
@@ -482,37 +410,25 @@ export function PlayerProvider({ children }) {
             }
 
             if (e.data === S.PAUSED) {
-              /* Paused — stop polling */
               setPlaying(false);
               clearInterval(pollRef.current);
             }
 
             if (e.data === S.ENDED) {
-              /* Song ended — advance to next track.
-                 BUG 2 FIX: read refs not state.
-                 State is frozen at creation time here.
-                 Refs are always up-to-date. */
+              /* Song ended — use refs (not stale state) to find next track */
               clearInterval(pollRef.current);
               setPlaying(false);
               setTime(0);
 
               setIdx(i => {
-                const q = queueRef.current; /* live queue */
+                const q = queueRef.current;
                 if (q.length === 0) return i;
-
                 if (shuffleRef.current) {
-                  /* Shuffle: random track, avoid same index */
                   let next = Math.floor(Math.random() * q.length);
                   if (q.length > 1 && next === i) next = (next + 1) % q.length;
                   return next;
                 }
-
-                if (repeatRef.current) {
-                  /* Repeat all: loop back after last track */
-                  return (i + 1) % q.length;
-                }
-
-                /* Normal: advance one, stop at last track */
+                if (repeatRef.current) return (i + 1) % q.length;
                 return Math.min(i + 1, q.length - 1);
               });
             }
@@ -521,55 +437,26 @@ export function PlayerProvider({ children }) {
       });
     };
 
-    /* ── BUG 1 FIX: waitForSlot ──────────────────────────
-       PlayerProvider mounts BEFORE Player.jsx renders the
-       #yt-player-slot div. Without this wait, initPlayer()
-       runs against a non-existent element and silently fails.
+    /* YouTube API already loaded → create player now */
+    if (window.YT && window.YT.Player) {
+      createPlayer();
+    } else {
+      /* API not ready yet → YouTube will call this when ready */
+      window.onYouTubeIframeAPIReady = createPlayer;
+    }
 
-       We poll every 100ms. As soon as the slot div appears,
-       we proceed to init (or wait for the YT API if needed). */
-    const waitForSlot = () => {
-      const slot = document.getElementById('yt-player-slot');
-      if (!slot) {
-        /* Div not in DOM yet — check again in 100ms */
-        setTimeout(waitForSlot, 100);
-        return;
-      }
-      /* Slot exists — safe to create the player now */
-      if (window.YT && window.YT.Player) {
-        /* YouTube API already loaded — init immediately */
-        initPlayer();
-      } else {
-        /* YouTube API not ready — register the global callback.
-           YouTube calls window.onYouTubeIframeAPIReady once
-           the iframe_api script finishes loading. */
-        window.onYouTubeIframeAPIReady = initPlayer;
-      }
-    };
-
-    waitForSlot();
-
-    /* Cleanup: stop progress polling on unmount */
-    return () => clearInterval(pollRef.current);
-
-  }, []); /* runs once on mount — intentional */
+  }, []); /* stable — never recreated */
 
 
   /* ════════════════════════════════════════════
      LOAD VIDEO — runs whenever current song changes
      ─────────────────────────────────────────────
-     Triggered by: user clicking a song, next/prev,
-     or song ending and idx incrementing.
-
-     1. Reset progress bar to zero.
-     2. If player ready  → loadVideoById immediately.
-     3. If player not ready → store in pendingId.
-        onReady picks it up when player initialises.
-     4. If loadVideoById throws (rare race) → retry 300ms.
+     Triggered by: clicking a song, next/prev, song ending.
+     If player ready  → loadVideoById immediately.
+     If not ready yet → store in pendingId for onReady.
   ════════════════════════════════════════════ */
   useEffect(() => {
     if (!current) return;
-
     setTime(0);
     setDur(0);
 
@@ -577,9 +464,8 @@ export function PlayerProvider({ children }) {
       if (readyRef.current && ytPlayer.current) {
         try {
           ytPlayer.current.loadVideoById(current.videoId);
-          ytPlayer.current.setVolume(volume);
+          ytPlayer.current.setVolume(volumeRef.current);
         } catch (err) {
-          /* Rare race: iframe not fully attached yet — retry */
           console.warn('[Player] loadVideoById failed, retrying...', err);
           setTimeout(tryLoad, 300);
         }
@@ -592,12 +478,16 @@ export function PlayerProvider({ children }) {
     tryLoad();
   }, [current?.videoId]); /* eslint-disable-line react-hooks/exhaustive-deps */
 
+  /* Cleanup: stop polling on unmount */
+  useEffect(() => () => clearInterval(pollRef.current), []);
+
 
   /* ════════════════════════════════════════════
      setVolume — syncs React state + live player
   ════════════════════════════════════════════ */
   const setVolume = useCallback((v) => {
     setVolRaw(v);
+    volumeRef.current = v;
     if (ytPlayer.current && readyRef.current) {
       ytPlayer.current.setVolume(v);
       if (v === 0) ytPlayer.current.mute?.();
@@ -608,12 +498,6 @@ export function PlayerProvider({ children }) {
 
   /* ════════════════════════════════════════════
      play(song, newQueue?)
-     ─────────────────────────────────────────────
-     newQueue provided → replace entire queue, jump to song.
-     No newQueue:
-       Song in queue already → jump to it.
-       New song → append to queue, jump to new end.
-     Changing idx triggers the LOAD VIDEO effect above.
   ════════════════════════════════════════════ */
   const play = useCallback((song, newQueue = null) => {
     if (newQueue && newQueue.length > 0) {
@@ -623,10 +507,8 @@ export function PlayerProvider({ children }) {
     } else {
       const existing = queue.findIndex(s => s.videoId === song.videoId);
       if (existing >= 0) {
-        /* Already in queue — just jump to it */
         setIdx(existing);
       } else {
-        /* New song — append and jump */
         setQueue(q => {
           const n = [...q, song];
           setTimeout(() => setIdx(n.length - 1), 0);
@@ -638,9 +520,7 @@ export function PlayerProvider({ children }) {
   }, [queue]);
 
 
-  /* ════════════════════════════════════════════
-     next / prev — manual track navigation
-  ════════════════════════════════════════════ */
+  /* ── next / prev ── */
   const next = useCallback(() => {
     if (queue.length === 0) return;
     setIdx(i => {
@@ -657,9 +537,7 @@ export function PlayerProvider({ children }) {
   }, [idx]);
 
 
-  /* ════════════════════════════════════════════
-     togglePlay — pause / resume current song
-  ════════════════════════════════════════════ */
+  /* ── togglePlay ── */
   const togglePlay = useCallback(() => {
     if (!ytPlayer.current || !readyRef.current) return;
     if (playing) { ytPlayer.current.pauseVideo(); setPlaying(false); }
@@ -667,9 +545,7 @@ export function PlayerProvider({ children }) {
   }, [playing]);
 
 
-  /* ════════════════════════════════════════════
-     seekTo(sec) — jump to position in current song
-  ════════════════════════════════════════════ */
+  /* ── seekTo ── */
   const seekTo = useCallback((sec) => {
     if (ytPlayer.current && readyRef.current) {
       ytPlayer.current.seekTo(sec, true);
@@ -684,6 +560,7 @@ export function PlayerProvider({ children }) {
       videoOpen, time, dur,
       setVolume, setVideoOpen, play, next, prev,
       togglePlay, seekTo, setShuffle, setRepeat, setPlaying,
+      initYTPlayer, /* ← Player.jsx calls this after it mounts */
     }}>
       {children}
     </PlayerCtx.Provider>
