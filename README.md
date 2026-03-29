@@ -179,7 +179,12 @@ cd frontend && npm run dev
 | One search | ~100 units |
 | Video details | ~1 unit |
 
-> 💡 **Multi-Key Rotation Strategy** — Groovix uses **33 YouTube API keys** that rotate automatically when one hits its daily limit. This gives a total of **330,000 units/day** — ensuring 24/7 uninterrupted music streaming. Each key resets at midnight Pacific Time.
+> 💡 **Quota Optimization Strategy** — During development, hitting the YouTube API's daily quota limit was a key challenge. Rather than relying on workarounds, I focused on building a scalable, production-ready solution:
+>
+> - **Two-Layer Caching** — An **in-memory cache** (short TTL) handles repeated requests within the same server instance for near-instant responses. A **MongoDB-based cache** (longer TTL) persists data across server restarts and instances, significantly reducing redundant API calls.
+> - **Response Compression** — Enabled **gzip compression** on the backend to reduce payload sizes and improve overall response performance.
+>
+> These optimizations reduced API usage drastically, improved app performance, and made the system scalable without dependence on external API quota limits.
 
 ## 🎵 How the Player Works
 ```
