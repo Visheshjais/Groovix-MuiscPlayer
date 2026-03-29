@@ -9,7 +9,7 @@
  *    2. AuthProvider     – real MongoDB login / logout / session restore
  *    3. LikedProvider    – liked songs (MongoDB for logged-in, localStorage for guest)
  *    4. PlaylistProvider – playlists (MongoDB for logged-in, localStorage for guest)
- *    5. PlayerProvider   – YouTube IFrame API engine (unchanged)
+ *    5. PlayerProvider   – YouTube IFrame API engine (FIXED — stale closure bug)
  *    6. ToastProvider    – toast notifications (unchanged)
  *
  *  ── WHAT CHANGED FROM LOCALSTORAGE VERSION ─────────────────
@@ -53,6 +53,22 @@
  *  The video panel is hidden with opacity:0 + position:absolute.
  *  This keeps the iframe visible to YouTube (not clipped),
  *  so audio keeps playing even when panel is "closed".
+ *
+ *  ── BUG FIX: STALE CLOSURE IN onStateChange ────────────────
+ *
+ *  PROBLEM (old code):
+ *    The onStateChange callback was created once inside useEffect([]).
+ *    It captured queue, shuffle, repeat from the initial render —
+ *    all were empty/false at that point and NEVER updated inside
+ *    the callback, because closures in JS freeze the values they
+ *    see at creation time. So when a song ended:
+ *      queue.length === 0  → nothing played next
+ *
+ *  FIX (new code):
+ *    Three refs are added: queueRef, shuffleRef, repeatRef.
+ *    Separate useEffects keep these refs in sync with state.
+ *    onStateChange reads from the refs instead of the stale
+ *    closure values — refs are always current.
  * ============================================================
  */
 
@@ -446,7 +462,24 @@ export const usePlaylists = () => useContext(PlaylistCtx);
 
 
 /* ══════════════════════════════════════════════
-   5.  PLAYER CONTEXT  ← THE CORE ENGINE  (unchanged)
+   5.  PLAYER CONTEXT  ← THE CORE ENGINE
+   ──────────────────────────────────────────────
+   FIXED: Stale closure bug in onStateChange.
+
+   The YouTube IFrame API fires onStateChange from inside
+   a native JS callback — it has NO access to React state.
+   Any state variable read inside onStateChange is frozen
+   at the value it had when the callback was first created
+   (i.e. the initial render — all empty / false).
+
+   Solution: mirror queue, shuffle, repeat into refs.
+   Refs are mutable objects — their .current always points
+   to the latest value. Three useEffects below keep the
+   refs perfectly in sync whenever state changes.
+
+   onStateChange now reads queueRef.current etc. instead
+   of the stale closure values, so next-song logic always
+   uses the real live queue.
    ══════════════════════════════════════════════ */
 const PlayerCtx = createContext(null);
 
@@ -462,46 +495,90 @@ export function PlayerProvider({ children }) {
   const [time,      setTime]      = useState(0);
   const [dur,       setDur]       = useState(0);
 
-  const ytPlayer  = useRef(null);
-  const readyRef  = useRef(false);
-  const pollRef   = useRef(null);
-  const pendingId = useRef(null);
+  /* ── YouTube player instance + control flags ── */
+  const ytPlayer  = useRef(null);   /* YT.Player instance */
+  const readyRef  = useRef(false);  /* true after onReady fires */
+  const pollRef   = useRef(null);   /* setInterval id for time updates */
+  const pendingId = useRef(null);   /* videoId waiting for player to be ready */
+
+  /* ── STALE CLOSURE FIX: refs that mirror live state ──
+     onStateChange is created once and can't see state updates.
+     These refs are always current — update them via useEffect. */
+  const queueRef   = useRef(queue);
+  const shuffleRef = useRef(shuffle);
+  const repeatRef  = useRef(repeat);
+
+  /* Keep refs in sync with state on every change */
+  useEffect(() => { queueRef.current   = queue;   }, [queue]);
+  useEffect(() => { shuffleRef.current = shuffle; }, [shuffle]);
+  useEffect(() => { repeatRef.current  = repeat;  }, [repeat]);
 
   const current = queue[idx] || null;
 
+
+  /* ════════════════════════════════════════════
+     INIT PLAYER — runs once on mount
+     ─────────────────────────────────────────────
+     Creates the YT.Player instance attached to #yt-player-slot.
+     If the API script has already loaded (window.YT exists),
+     we create immediately. Otherwise we set onYouTubeIframeAPIReady
+     so the API calls us when it's done loading.
+
+     onReady:
+       Marks readyRef true, sets volume, plays any pending video
+       that was clicked before the player finished initialising.
+
+     onStateChange:
+       Tracks PLAYING / PAUSED / ENDED states.
+       PLAYING  → starts the 500ms poll for currentTime / duration.
+       PAUSED   → stops the poll.
+       ENDED    → advances to the next track using refs (not stale state).
+
+     NOTE: reads queueRef / shuffleRef / repeatRef — never raw state —
+     because this callback is created once and state would be stale.
+  ════════════════════════════════════════════ */
   useEffect(() => {
     const initPlayer = () => {
+      /* Guard: only create one instance */
       if (ytPlayer.current) return;
 
       ytPlayer.current = new window.YT.Player('yt-player-slot', {
         height: '100%',
         width:  '100%',
         playerVars: {
-          autoplay:       1,
-          controls:       0,
-          disablekb:      1,
-          fs:             0,
-          iv_load_policy: 3,
-          modestbranding: 1,
-          rel:            0,
-          showinfo:       0,
-          playsinline:    1,
-          cc_load_policy: 0,
-          enablejsapi:    1,
-          origin:         window.location.origin,
+          autoplay:       1,   /* start playing as soon as video loads */
+          controls:       0,   /* hide YouTube's native controls */
+          disablekb:      1,   /* disable keyboard shortcuts inside iframe */
+          fs:             0,   /* disable fullscreen button */
+          iv_load_policy: 3,   /* hide video annotations */
+          modestbranding: 1,   /* minimal YouTube branding */
+          rel:            0,   /* don't show related videos on end */
+          showinfo:       0,   /* hide video title bar */
+          playsinline:    1,   /* prevent fullscreen on iOS */
+          cc_load_policy: 0,   /* hide closed captions by default */
+          enablejsapi:    1,   /* required for JS API control */
+          origin:         window.location.origin, /* avoids cross-origin playback blocks */
         },
         events: {
+
+          /* ── onReady: player DOM is fully initialised ── */
           onReady: (e) => {
             readyRef.current = true;
             e.target.setVolume(volume);
+
+            /* Play any song that was clicked before player was ready */
             if (pendingId.current) {
               e.target.loadVideoById(pendingId.current);
               pendingId.current = null;
             }
           },
+
+          /* ── onStateChange: react to play / pause / end ── */
           onStateChange: (e) => {
             const S = window.YT.PlayerState;
+
             if (e.data === S.PLAYING) {
+              /* Song started — begin polling for progress bar */
               setPlaying(true);
               clearInterval(pollRef.current);
               pollRef.current = setInterval(() => {
@@ -510,38 +587,76 @@ export function PlayerProvider({ children }) {
                 setDur(Math.floor(ytPlayer.current.getDuration()));
               }, 500);
             }
+
             if (e.data === S.PAUSED) {
+              /* Song paused — stop polling */
               setPlaying(false);
               clearInterval(pollRef.current);
             }
+
             if (e.data === S.ENDED) {
+              /* Song finished — advance to next track.
+                 IMPORTANT: Read from refs, NOT state.
+                 State values here are frozen at initial render
+                 (stale closure). Refs are always up-to-date. */
               clearInterval(pollRef.current);
               setPlaying(false);
               setTime(0);
+
               setIdx(i => {
-                if (queue.length === 0) return i;
-                if (shuffle) return Math.floor(Math.random() * queue.length);
-                if (repeat)  return (i + 1) % queue.length;
-                return Math.min(i + 1, queue.length - 1);
+                const q = queueRef.current;   /* live queue via ref */
+                if (q.length === 0) return i;
+
+                if (shuffleRef.current) {
+                  /* Shuffle: pick a random track (avoid same index) */
+                  let next = Math.floor(Math.random() * q.length);
+                  if (q.length > 1 && next === i) next = (next + 1) % q.length;
+                  return next;
+                }
+
+                if (repeatRef.current) {
+                  /* Repeat all: loop back to start after last track */
+                  return (i + 1) % q.length;
+                }
+
+                /* Normal: advance one, stop at last track */
+                return Math.min(i + 1, q.length - 1);
               });
-              setTimeout(() => setPlaying(true), 80);
             }
           },
         },
       });
     };
 
+    /* API already loaded → init immediately */
     if (window.YT && window.YT.Player) {
       initPlayer();
     } else {
+      /* API not ready yet → set the global callback YouTube will call */
       window.onYouTubeIframeAPIReady = initPlayer;
     }
 
+    /* Cleanup: stop progress polling on unmount */
     return () => clearInterval(pollRef.current);
-  }, []);
+  }, []); /* eslint-disable-line react-hooks/exhaustive-deps — intentionally runs once */
 
+
+  /* ════════════════════════════════════════════
+     LOAD VIDEO — runs whenever the current song changes
+     ─────────────────────────────────────────────
+     When current.videoId changes (user clicks a song,
+     next/prev is pressed, or song ends and idx advances):
+
+     1. Reset progress bar to 0.
+     2. If player is ready → call loadVideoById immediately.
+     3. If player is not ready yet → store in pendingId.
+        onReady will pick it up and play when ready.
+     4. If loadVideoById throws (race condition) → retry after 300ms.
+  ════════════════════════════════════════════ */
   useEffect(() => {
     if (!current) return;
+
+    /* Reset progress display */
     setTime(0);
     setDur(0);
 
@@ -551,27 +666,48 @@ export function PlayerProvider({ children }) {
           ytPlayer.current.loadVideoById(current.videoId);
           ytPlayer.current.setVolume(volume);
         } catch (err) {
-          /* Player not attached yet — retry after 300ms */
+          /* Player iframe not fully attached yet — retry shortly */
+          console.warn('[Player] loadVideoById failed, retrying...', err);
           setTimeout(tryLoad, 300);
         }
       } else {
-        /* Store as pending — onReady will pick it up */
+        /* Player not ready — queue the video id for onReady */
         pendingId.current = current.videoId;
       }
     };
 
     tryLoad();
-  }, [current?.videoId]);
+  }, [current?.videoId]); /* eslint-disable-line react-hooks/exhaustive-deps */
 
+
+  /* ════════════════════════════════════════════
+     setVolume — updates both React state and the live player
+  ════════════════════════════════════════════ */
   const setVolume = useCallback((v) => {
     setVolRaw(v);
     if (ytPlayer.current && readyRef.current) {
       ytPlayer.current.setVolume(v);
+      /* Mute/unmute based on volume level */
       if (v === 0) ytPlayer.current.mute?.();
       else         ytPlayer.current.unMute?.();
     }
   }, []);
 
+
+  /* ════════════════════════════════════════════
+     play(song, newQueue?)
+     ─────────────────────────────────────────────
+     Starts playing a song.
+
+     If newQueue is provided (e.g. user clicks from a playlist):
+       Replace the entire queue and set idx to the clicked song.
+
+     If no newQueue:
+       If song is already in queue → jump to it.
+       If not → append to queue and jump to the new end.
+
+     Setting idx triggers the useEffect above which calls loadVideoById.
+  ════════════════════════════════════════════ */
   const play = useCallback((song, newQueue = null) => {
     if (newQueue && newQueue.length > 0) {
       const i = newQueue.findIndex(s => s.videoId === song.videoId);
@@ -580,8 +716,10 @@ export function PlayerProvider({ children }) {
     } else {
       const existing = queue.findIndex(s => s.videoId === song.videoId);
       if (existing >= 0) {
+        /* Song already in queue — just jump to it */
         setIdx(existing);
       } else {
+        /* New song — append and jump to it */
         setQueue(q => {
           const n = [...q, song];
           setTimeout(() => setIdx(n.length - 1), 0);
@@ -592,6 +730,10 @@ export function PlayerProvider({ children }) {
     setPlaying(true);
   }, [queue]);
 
+
+  /* ════════════════════════════════════════════
+     next / prev — manual track navigation
+  ════════════════════════════════════════════ */
   const next = useCallback(() => {
     if (queue.length === 0) return;
     setIdx(i => {
@@ -607,18 +749,27 @@ export function PlayerProvider({ children }) {
     if (idx > 0) { setIdx(i => i - 1); setPlaying(true); setTime(0); }
   }, [idx]);
 
+
+  /* ════════════════════════════════════════════
+     togglePlay — pause / resume the current song
+  ════════════════════════════════════════════ */
   const togglePlay = useCallback(() => {
     if (!ytPlayer.current || !readyRef.current) return;
     if (playing) { ytPlayer.current.pauseVideo(); setPlaying(false); }
     else         { ytPlayer.current.playVideo();  setPlaying(true);  }
   }, [playing]);
 
+
+  /* ════════════════════════════════════════════
+     seekTo(sec) — jump to a position in the song
+  ════════════════════════════════════════════ */
   const seekTo = useCallback((sec) => {
     if (ytPlayer.current && readyRef.current) {
       ytPlayer.current.seekTo(sec, true);
       setTime(sec);
     }
   }, []);
+
 
   return (
     <PlayerCtx.Provider value={{
