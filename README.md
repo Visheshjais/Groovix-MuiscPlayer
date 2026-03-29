@@ -21,12 +21,8 @@
 
 ## 📖 What is Groovix?
 
-Groovix is a **full-stack music streaming web app** built by Vishesh Jaiswal — a student who knows HTML, CSS, JavaScript, React, Node.js, and Express.
-
-It looks and feels like Spotify, but under the hood it uses the **YouTube Data API v3** to fetch real songs and the **YouTube IFrame Player API** to play them — with YouTube's own controls completely hidden. You get a clean, custom music player UI with no YouTube branding visible.
-
-The app has a **Node.js + Express backend** hosted on Vercel that handles all YouTube API calls (keeping the API key safe on the server), a **MongoDB Atlas** database for storing users, liked songs, and playlists, and a **React frontend** hosted on Vercel that talks to it.
-
+Groovix is a full-stack music streaming web app that delivers a Spotify-like experience powered by the YouTube Data API v3 to fetch real songs and the YouTube IFrame Player API to play them — with YouTube's own controls completely hidden. You get a clean, custom music player UI with no YouTube branding visible.
+The app has a Node.js + Express backend hosted on Vercel that handles all YouTube API calls (keeping the API key safe on the server), a MongoDB Atlas database for storing users, liked songs, and playlists, and a React frontend hosted on Vercel that talks to it.
 ---
 
 ## ✨ Features
